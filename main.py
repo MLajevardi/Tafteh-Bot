@@ -1,36 +1,40 @@
 import logging
+import asyncio
+import os
+from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import httpx
-import os
-from dotenv import load_dotenv
 
 # بارگذاری متغیرهای محیطی از فایل .env
 load_dotenv()
 
+# فعال‌سازی لاگ‌ها
 logging.basicConfig(level=logging.INFO)
 
+# دریافت توکن‌ها از محیط
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
+# پیام خوش‌آمدگویی و عکس
 WELCOME_MESSAGE = """
 سلام! 👋  
 من «ربات تافته» هستم 🤖  
 لطفاً یکی از موارد زیر را انتخاب کنید:
 """
-
 WELCOME_IMAGE_URL = "https://tafteh.ir/wp-content/uploads/2024/12/navar-nehdashti2-600x600.jpg"
 
+# منوها
 MAIN_MENU = ReplyKeyboardMarkup(
     [["👨‍⚕️ دکتر تافته", "📦 راهنمای محصولات"]],
     resize_keyboard=True
 )
-
 BACK_MENU = ReplyKeyboardMarkup(
     [["🔙 بازگشت به منوی اصلی"]],
     resize_keyboard=True
 )
 
+# پرسش از OpenRouter
 async def ask_openrouter(prompt: str) -> str:
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -54,11 +58,13 @@ async def ask_openrouter(prompt: str) -> str:
         except Exception:
             return "❌ مشکلی در دریافت پاسخ پیش آمده است. لطفاً دوباره تلاش کنید."
 
+# تشخیص سوال پزشکی بودن
 async def is_medical_question(text: str) -> bool:
     prompt = f"آیا این سوال پزشکی است؟ فقط با 'بله' یا 'خیر' پاسخ بده: {text}"
     answer = await ask_openrouter(prompt)
     return "بله" in answer.strip().lower()
 
+# دستور /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_photo(
         chat_id=update.effective_chat.id,
@@ -67,6 +73,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=MAIN_MENU
     )
 
+# مدیریت پیام‌ها
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
@@ -92,6 +99,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("لطفاً یکی از موارد زیر را انتخاب کنید:", reply_markup=MAIN_MENU)
         return
 
+    # پاسخ به سوالات پزشکی
     if context.user_data.get("mode") == "doctor":
         if not await is_medical_question(text):
             await update.message.reply_text("❗️ لطفاً فقط سوالات پزشکی مطرح کنید.", reply_markup=BACK_MENU)
@@ -102,11 +110,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(answer, parse_mode='Markdown')
         return
 
+    # پیام پیش‌فرض
     await update.message.reply_text("لطفاً یکی از موارد زیر را انتخاب کنید:", reply_markup=MAIN_MENU)
 
-if __name__ == '__main__':
+# راه‌اندازی کامل بات
+async def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    # قطع ارتباط‌های قبلی (رفع خطای Conflict)
+    await app.bot.delete_webhook(drop_pending_updates=True)
+
+    # ثبت فرمان‌ها
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
     print("🤖 Bot is running...")
-    app.run_polling()
+    await app.run_polling()
+
+if __name__ == '__main__':
+    asyncio.run(main())

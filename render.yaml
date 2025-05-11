@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: doctor-tafteh-bot
+    runtime: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python main.py"
+    envVars:
+      - key: BOT_TOKEN
+        fromDotEnv: true
+      - key: OPENROUTER_API_KEY
+        fromDotEnv: true
