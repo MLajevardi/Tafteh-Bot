@@ -1,43 +1,64 @@
 import os
-import logging
+import requests
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 from dotenv import load_dotenv
 
-# بارگذاری متغیرهای محیطی از فایل .env
 load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
 
-# تنظیم لاگر
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-# پیام خوش‌آمدگویی
+# پیام خوش‌آمد
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "سلام! من دکتر تافته هستم.\nسوال پزشکی‌ات رو از من بپرس."
-    )
+    await update.message.reply_text("سلام! من دکتر تافته هستم. سوال پزشکی‌ات رو بپرس 🌿")
 
-# پاسخ به پیام‌های کاربر
+# گرفتن پاسخ از OpenRouter
+def get_ai_response(message: str) -> str:
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "openai/gpt-3.5-turbo",
+        "messages": [
+            {"role": "system", "content": "تو یک پزشک متخصص عمومی هستی که به سوالات پزشکی کاربران پاسخ می‌دهی."},
+            {"role": "user", "content": message}
+        ]
+    }
+    response = requests.post(url, headers=headers, json=payload)
+    result = response.json()
+
+    try:
+        return result["choices"][0]["message"]["content"].strip()
+    except:
+        return "متأسفم، مشکلی در پاسخ‌دهی به وجود آمده."
+
+# پاسخ به پیام کاربر
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
+    user_text = update.message.text
+    await update.message.reply_text("⏳ در حال بررسی سوال شما...")
 
-    # در اینجا پاسخ ساختگی برای تست داده می‌شود.
-    response = f"🤖 دکتر تافته: سوالت رو گرفتم!\n«{user_message}»\nولی من فعلاً یه بات آزمایشی‌ام."
+    answer = get_ai_response(user_text)
+    await update.message.reply_text(answer)
 
-    await update.message.reply_text(response)
-
-# تابع اصلی برای اجرای ربات
+# تابع main بدون async برای سازگاری با Render
 def main():
-    application = ApplicationBuilder().token(TOKEN).build()
+    print("🤖 Doctor Tafta is running...")
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    print("🤖 Bot is running...")
-    application.run_polling()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-if __name__ == '__main__':
+    app.run_polling()
+
+if __name__ == "__main__":
     main()
