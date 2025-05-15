@@ -1,64 +1,107 @@
+import logging
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import httpx
 import os
-import requests
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
+
+logging.basicConfig(level=logging.INFO)
+
+TELEGRAM_TOKEN = os.environ.get("BOT_TOKEN")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+
+WELCOME_MESSAGE = """
+سلام! 👋  
+من «ربات تافته» هستم 🤖  
+لطفاً یکی از موارد زیر را انتخاب کنید:
+"""
+
+WELCOME_IMAGE_URL = "https://tafteh.ir/wp-content/uploads/2024/12/navar-nehdashti2-600x600.jpg"
+
+MAIN_MENU = ReplyKeyboardMarkup(
+    [["👨‍⚕️ دکتر تافته", "📦 راهنمای محصولات"]],
+    resize_keyboard=True
 )
-from dotenv import load_dotenv
 
-load_dotenv()
+BACK_MENU = ReplyKeyboardMarkup(
+    [["🔙 بازگشت به منوی اصلی"]],
+    resize_keyboard=True
+)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-# پیام خوش‌آمد
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام! من دکتر تافته هستم. سوال پزشکی‌ات رو بپرس 🌿")
-
-# گرفتن پاسخ از OpenRouter
-def get_ai_response(message: str) -> str:
-    url = "https://openrouter.ai/api/v1/chat/completions"
+async def ask_openrouter(prompt: str) -> str:
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
-    payload = {
+    body = {
         "model": "openai/gpt-3.5-turbo",
         "messages": [
-            {"role": "system", "content": "تو یک پزشک متخصص عمومی هستی که به سوالات پزشکی کاربران پاسخ می‌دهی."},
-            {"role": "user", "content": message}
+            {
+                "role": "system",
+                "content": "شما یک پزشک عمومی متخصص هستید. لطفاً به تمام سوالات پزشکی کاربران به زبان فارسی، دقیق، علمی، محترمانه و ساده پاسخ دهید. از دادن توصیه‌های غیرپزشکی خودداری کنید."
+            },
+            {"role": "user", "content": prompt}
         ]
     }
-    response = requests.post(url, headers=headers, json=payload)
-    result = response.json()
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body)
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+        except Exception:
+            return "❌ مشکلی در دریافت پاسخ پیش آمده است. لطفاً دوباره تلاش کنید."
 
-    try:
-        return result["choices"][0]["message"]["content"].strip()
-    except:
-        return "متأسفم، مشکلی در پاسخ‌دهی به وجود آمده."
+async def is_medical_question(text: str) -> bool:
+    prompt = f"آیا این سوال پزشکی است؟ فقط با 'بله' یا 'خیر' پاسخ بده: {text}"
+    answer = await ask_openrouter(prompt)
+    return "بله" in answer.strip().lower()
 
-# پاسخ به پیام کاربر
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=WELCOME_IMAGE_URL,
+        caption=WELCOME_MESSAGE,
+        reply_markup=MAIN_MENU
+    )
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
-    await update.message.reply_text("⏳ در حال بررسی سوال شما...")
+    text = update.message.text
 
-    answer = get_ai_response(user_text)
-    await update.message.reply_text(answer)
+    if text == "👨‍⚕️ دکتر تافته":
+        context.user_data["mode"] = "doctor"
+        await update.message.reply_text(
+            "🩺 سوالات پزشکی خود را از دکتر تافته بپرسید. توجه داشته باشید که پاسخ‌ها هر هفته توسط پزشک مجرب بررسی می‌شوند.",
+            reply_markup=BACK_MENU
+        )
+        return
 
-# تابع main بدون async برای سازگاری با Render
-def main():
-    print("🤖 Doctor Tafta is running...")
+    if text == "📦 راهنمای محصولات":
+        context.user_data["mode"] = "products"
+        await update.message.reply_text(
+            "برای مشاهده محصولات، به سایت تافته مراجعه کنید:\n🌐 https://tafteh.ir",
+            reply_markup=BACK_MENU
+        )
+        return
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    if text == "🔙 بازگشت به منوی اصلی":
+        context.user_data["mode"] = "menu"
+        await update.message.reply_text("لطفاً یکی از موارد زیر را انتخاب کنید:", reply_markup=MAIN_MENU)
+        return
 
+    if context.user_data.get("mode") == "doctor":
+        if not await is_medical_question(text):
+            await update.message.reply_text("❗️ لطفاً فقط سوالات پزشکی مطرح کنید.", reply_markup=BACK_MENU)
+            return
+
+        await update.message.reply_text("⏳ لطفاً منتظر بمانید...")
+        answer = await ask_openrouter(text)
+        await update.message.reply_text(answer)
+        return
+
+    await update.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید:", reply_markup=MAIN_MENU)
+
+if __name__ == '__main__':
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
+    print("🤖 ربات فعال است...")
     app.run_polling()
-
-if __name__ == "__main__":
-    main()
