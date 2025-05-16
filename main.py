@@ -1,104 +1,136 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
-from flask import Flask
-import threading
+import logging
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import httpx
 import os
+from dotenv import load_dotenv
 
-# حالت‌ها برای ConversationHandler
-AGE, GENDER, ASK_QUESTION = range(3)
+# بارگذاری متغیرهای محیطی
+load_dotenv()
 
-# حافظه موقت کاربران
-user_data = {}
+logging.basicConfig(level=logging.INFO)
 
-# ساخت سرور Flask برای زنده نگه‌داشتن در Render
-app_web = Flask(__name__)
+TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-@app_web.route('/')
-def home():
-    return "✅ Doctor Tafteh bot is running."
+# منوها
+MAIN_MENU = ReplyKeyboardMarkup(
+    [["👨‍⚕️ دکتر تافته", "📦 راهنمای محصولات"]],
+    resize_keyboard=True
+)
+BACK_MENU = ReplyKeyboardMarkup(
+    [["🔙 بازگشت به منوی اصلی"]],
+    resize_keyboard=True
+)
 
-def run():
-    app_web.run(host='0.0.0.0', port=8080)
+# تصویر خوش‌آمدگویی
+WELCOME_IMAGE_URL = "https://tafteh.ir/wp-content/uploads/2024/12/navar-nehdashti2-600x600.jpg"
 
-threading.Thread(target=run).start()
+# سوال از مدل GPT
+async def ask_openrouter(prompt: str) -> str:
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    body = {
+        "model": "openai/gpt-3.5-turbo",
+        "messages": [
+            {
+                "role": "system",
+                "content": "شما یک پزشک عمومی متخصص هستید. لطفاً به تمام سوالات پزشکی کاربران به زبان فارسی، دقیق، علمی، محترمانه و ساده پاسخ دهید. از دادن توصیه‌های غیرپزشکی خودداری کنید."
+            },
+            {"role": "user", "content": prompt}
+        ]
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body)
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+        except Exception:
+            return "❌ مشکلی در دریافت پاسخ پیش آمده است. لطفاً دوباره تلاش کنید."
 
-# دکمه‌ها
-main_menu_keyboard = [
-    [InlineKeyboardButton("👨‍⚕️ مشاوره پزشکی", callback_data='doctor')],
-    [InlineKeyboardButton("🛍 مشاهده محصولات", url="https://www.tafteh.com/")],
-]
-main_menu_markup = InlineKeyboardMarkup(main_menu_keyboard)
+# چک پزشکی بودن سؤال
+async def is_medical_question(text: str) -> bool:
+    prompt = f"آیا این سوال پزشکی است؟ فقط با 'بله' یا 'خیر' پاسخ بده: {text}"
+    answer = await ask_openrouter(prompt)
+    return "بله" in answer.strip().lower()
 
-back_to_menu_keyboard = [
-    [InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data='back')]
-]
-back_to_menu_markup = InlineKeyboardMarkup(back_to_menu_keyboard)
-
+# دستور /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_data[user_id] = {}
-    await update.message.reply_text("به ربات دکتر تافته خوش آمدید! سن خود را وارد کنید:")
-    return AGE
-
-async def get_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_data[user_id]["age"] = update.message.text
-    await update.message.reply_text("جنسیت خود را وارد کنید (زن/مرد):")
-    return GENDER
-
-async def get_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_data[user_id]["gender"] = update.message.text
-    await update.message.reply_text("لطفاً سوال پزشکی خود را وارد کنید:")
-    return ASK_QUESTION
-
-async def answer_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    question = update.message.text
-    age = user_data[user_id].get("age")
-    gender = user_data[user_id].get("gender")
-
-    # اینجا می‌تونی هوش مصنوعی یا هر پاسخ دهنده‌ای اضافه کنی
-    response = f"سوال شما: {question}\nسن: {age}، جنسیت: {gender}\nپاسخ: لطفاً برای پاسخ دقیق‌تر به پزشک مراجعه کنید."
-
-    await update.message.reply_text(response, reply_markup=back_to_menu_markup)
-    return ConversationHandler.END
-
-async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == 'doctor':
-        await query.message.reply_text("سن خود را وارد کنید:")
-        return AGE
-    elif query.data == 'back':
-        await query.message.reply_text("به منوی اصلی برگشتید:", reply_markup=main_menu_markup)
-        return ConversationHandler.END
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("لغو شد. برای شروع دوباره /start را بزنید.")
-    return ConversationHandler.END
-
-def main():
-    TOKEN = os.getenv("BOT_TOKEN")  # توکن در محیط تعریف شده است
-    app = Application.builder().token(TOKEN).build()
-
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_age)],
-            GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_gender)],
-            ASK_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_question)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        allow_reentry=True
+    context.user_data.clear()
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=WELCOME_IMAGE_URL,
+        caption="سلام! 👋\nمن ربات تافته هستم. لطفاً یکی از گزینه‌ها را انتخاب کنید:",
+        reply_markup=MAIN_MENU
     )
 
-    app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(menu_callback))
+# هندل کردن پیام‌ها
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    user_data = context.user_data
 
-    print("✅ Bot is running...")
+    if text == "🔙 بازگشت به منوی اصلی":
+        user_data.clear()
+        await update.message.reply_text("به منوی اصلی بازگشتید ⬇️", reply_markup=MAIN_MENU)
+        return
+
+    # انتخاب دکتر تافته
+    if text == "👨‍⚕️ دکتر تافته":
+        user_data["state"] = "awaiting_age"
+        await update.message.reply_text("لطفاً سن خود را وارد کنید:", reply_markup=ReplyKeyboardRemove())
+        return
+
+    # دریافت سن
+    if user_data.get("state") == "awaiting_age":
+        if not text.isdigit() or not (1 <= int(text) <= 120):
+            await update.message.reply_text("❗️ لطفاً یک سن معتبر وارد کنید.")
+            return
+        user_data["age"] = int(text)
+        user_data["state"] = "awaiting_gender"
+        await update.message.reply_text("جنسیت خود را وارد کنید (مثلاً: زن یا مرد):")
+        return
+
+    # دریافت جنسیت
+    if user_data.get("state") == "awaiting_gender":
+        if text.strip() not in ["زن", "مرد"]:
+            await update.message.reply_text("❗️ لطفاً فقط بنویسید «زن» یا «مرد».")
+            return
+        user_data["gender"] = text.strip()
+        user_data["state"] = "doctor_ready"
+        await update.message.reply_text(
+            f"✅ مشخصات ثبت شد.\nسن: {user_data['age']} سال\nجنسیت: {user_data['gender']}\n\nاکنون سوال پزشکی خود را بپرسید:",
+            reply_markup=BACK_MENU
+        )
+        return
+
+    # دریافت سؤال پزشکی
+    if user_data.get("state") == "doctor_ready":
+        if not await is_medical_question(text):
+            await update.message.reply_text("❗️ لطفاً فقط سوالات پزشکی مطرح کنید.")
+            return
+        await update.message.reply_text("⏳ لطفاً منتظر پاسخ باشید...")
+        answer = await ask_openrouter(text)
+        await update.message.reply_text(answer, parse_mode="Markdown", reply_markup=BACK_MENU)
+        return
+
+    # انتخاب راهنمای محصولات ➡ باز کردن لینک سایت
+    if text == "📦 راهنمای محصولات":
+        await update.message.reply_text(
+            "برای مشاهده محصولات، روی لینک زیر کلیک کنید:\n[🌐 مشاهده سایت تافته](https://tafteh.ir)",
+            parse_mode="Markdown",
+            reply_markup=BACK_MENU
+        )
+        return
+
+    # حالت پیش‌فرض
+    await update.message.reply_text("لطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=MAIN_MENU)
+
+# راه‌اندازی ربات
+if __name__ == '__main__':
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("🤖 Bot is running...")
     app.run_polling()
-
-if __name__ == "__main__":
-    main()
