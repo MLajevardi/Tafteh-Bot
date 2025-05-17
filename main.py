@@ -3,8 +3,11 @@ import httpx
 import os
 from enum import Enum
 from dotenv import load_dotenv
+import threading # برای اجرای Flask در یک ترد جداگانه
+from flask import Flask # وارد کردن Flask
+import asyncio # برای مدیریت اجرای async ربات
 
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton # اضافه شدن Inline موارد
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -12,6 +15,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
     ConversationHandler,
+    Application # برای دسترسی به application در بخش خاموش شدن
 )
 
 # بارگذاری متغیرهای محیطی از فایل .env
@@ -29,7 +33,7 @@ TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL_NAME = os.getenv("OPENROUTER_MODEL_NAME", "openai/gpt-3.5-turbo")
 WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "https://tafteh.ir/wp-content/uploads/2024/12/navar-nehdashti2-600x600.jpg")
-URL_TAFTEH_WEBSITE = "https://tafteh.ir/" # آدرس وب‌سایت اصلی تافته
+URL_TAFTEH_WEBSITE = "https://tafteh.ir/"
 
 # بررسی وجود توکن‌های ضروری
 if not TELEGRAM_TOKEN:
@@ -45,13 +49,11 @@ class States(Enum):
     AWAITING_AGE = 2
     AWAITING_GENDER = 3
     DOCTOR_CONVERSATION = 4
-    # States.PRODUCT_GUIDE حذف شد
 
 # منوها
 MAIN_MENU_KEYBOARD = ReplyKeyboardMarkup(
     [["👨‍⚕️ دکتر تافته", "📦 راهنمای محصولات"]],
     resize_keyboard=True
-    # one_time_keyboard=True حذف شد تا منو پایدارتر باشد
 )
 BACK_TO_MAIN_MENU_KEYBOARD = ReplyKeyboardMarkup(
     [["🔙 بازگشت به منوی اصلی"]],
@@ -131,15 +133,12 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return States.AWAITING_AGE
     elif text == "📦 راهنمای محصولات":
-        # ایجاد دکمه شیشه‌ای (Inline Button) برای لینک وب‌سایت
         keyboard = [[InlineKeyboardButton("مشاهده وب‌سایت تافته", url=URL_TAFTEH_WEBSITE)]]
         reply_markup_inline = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
             "برای مشاهده محصولات و وب‌سایت تافته، روی دکمه زیر کلیک کنید:",
             reply_markup=reply_markup_inline
         )
-        # کاربر در منوی اصلی باقی می‌ماند و منوی اصلی همچنان باید فعال باشد
-        # (چون one_time_keyboard=True از MAIN_MENU_KEYBOARD حذف شد)
         return States.MAIN_MENU
     else:
         await update.message.reply_text(
@@ -202,8 +201,6 @@ async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFA
     await update.message.reply_text(answer, parse_mode="Markdown", reply_markup=BACK_TO_MAIN_MENU_KEYBOARD)
     return States.DOCTOR_CONVERSATION
 
-# product_guide_handler حذف شد چون دیگر نیازی به آن نیست
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
     logger.info(f"کاربر {user.id} ({user.full_name}) مکالمه را با /cancel لغو کرد.")
@@ -223,39 +220,22 @@ async def fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reply_markup=MAIN_MENU_KEYBOARD
     )
 
-def main() -> None:
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+# --- بخش وب سرور Flask ---
+flask_app = Flask(__name__)
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            States.MAIN_MENU: [
-                MessageHandler(filters.Regex("^(👨‍⚕️ دکتر تافته|📦 راهنمای محصولات)$"), main_menu_handler),
-                MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start) # برای اطمینان
-            ],
-            States.AWAITING_AGE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, request_age_handler)
-            ],
-            States.AWAITING_GENDER: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, request_gender_handler)
-            ],
-            States.DOCTOR_CONVERSATION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, doctor_conversation_handler)
-            ],
-            # States.PRODUCT_GUIDE حذف شد
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CommandHandler("start", start),
-            MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start),
-        ],
-    )
+@flask_app.route('/')
+def health_check():
+    """یک اندپوینت ساده برای اینکه Render تشخیص دهد سرویس فعال است و به پورت گوش می‌دهد."""
+    return 'ربات تلگرام تافته فعال است و به پورت گوش می‌دهد!', 200
 
-    application.add_handler(conv_handler)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
+def run_flask_app():
+    """Flask app را در پورتی که Render مشخص می‌کند اجرا می‌کند."""
+    # Render پورت را از طریق متغیر محیطی PORT تنظیم می‌کند.
+    port = int(os.environ.get('PORT', 8080)) # استفاده از 8080 به عنوان پیش‌فرض اگر PORT تنظیم نشده باشد (برای تست محلی)
+    logger.info(f"وب سرور Flask روی هاست 0.0.0.0 و پورت {port} شروع به کار می‌کند.")
+    flask_app.run(host='0.0.0.0', port=port)
 
-    logger.info("ربات در حال اجرا است...")
-    application.run_polling()
-
-if __name__ == '__main__':
-    main()
+# --- تابع اصلی ربات ---
+async def run_telegram_bot(app_for_shutdown: Application):
+    """ساخت و اجرای ربات تلگرام."""
+    # app_for_shutdown به
