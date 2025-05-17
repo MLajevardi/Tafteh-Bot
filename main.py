@@ -31,7 +31,7 @@ logger.info("اسکریپت main.py شروع به کار کرد. در حال ب�
 
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL_NAME = os.getenv("OPENROUTER_MODEL_NAME", "openai/gpt-3.5-turbo") # یا هر مدلی که مکالمه را بهتر پشتیبانی کند
+OPENROUTER_MODEL_NAME = os.getenv("OPENROUTER_MODEL_NAME", "openai/gpt-3.5-turbo")
 WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "https://tafteh.ir/wp-content/uploads/2024/12/navar-nehdashti2-600x600.jpg")
 URL_TAFTEH_WEBSITE = "https://tafteh.ir/"
 
@@ -58,25 +58,17 @@ MAIN_MENU_KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# منوی جدید برای حالت مکالمه با دکتر
+# منوی جدید برای حالت مکالمه با دکتر - one_time_keyboard=False (یا حذف شده)
 DOCTOR_CONVERSATION_KEYBOARD = ReplyKeyboardMarkup(
     [
-        ["❓ سوال جدید از دکتر"], # گزینه جدید
+        ["❓ سوال جدید از دکتر"],
         ["🔙 بازگشت به منوی اصلی"]
     ],
-    resize_keyboard=True,
-    one_time_keyboard=True # این کیبورد پس از هر بار استفاده باید مجددا ارسال شود اگر می‌خواهیم پایدار بماند، یا one_time_keyboard=False
+    resize_keyboard=True
+    # one_time_keyboard=True # حذف شد تا کیبورد پایدار بماند
 )
 
-
-# --- توابع کمکی ---
 async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
-    """
-    ارسال درخواست به OpenRouter API با تاریخچه مکالمه.
-    system_prompt: پرامپت سیستمی که شامل زمینه کلی و اطلاعات کاربر (سن، جنسیت) است.
-    chat_history: لیستی از پیام‌های قبلی {"role": "user", "content": ...} یا {"role": "assistant", "content": ...}
-    آخرین پیام در chat_history باید پیام فعلی کاربر باشد.
-    """
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
@@ -89,7 +81,7 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
         "messages": messages_payload
     }
     logger.info(f"آماده‌سازی درخواست برای OpenRouter با مدل: {OPENROUTER_MODEL_NAME} و {len(chat_history)} پیام در تاریخچه.")
-    async with httpx.AsyncClient(timeout=90.0) as client: # افزایش تایم‌اوت برای پاسخ‌های طولانی‌تر یا مکالمه‌ای
+    async with httpx.AsyncClient(timeout=90.0) as client:
         try:
             logger.debug(f"ارسال درخواست به OpenRouter. Body: {body}")
             resp = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body)
@@ -102,8 +94,6 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
                 llm_response_content = data["choices"][0]["message"]["content"].strip()
                 logger.info(f"محتوای دقیق پاسخ دریافت شده از LLM: '{llm_response_content}'")
 
-                # بررسی اینکه آیا مدل سعی در پرسیدن سوال دارد یا پاسخ نهایی می‌دهد
-                # این بخش می‌تواند هوشمندتر شود، مثلا با تحلیل خود پاسخ
                 if "?" in llm_response_content or "بیشتر توضیح دهید" in llm_response_content:
                     logger.info("LLM یک سوال پرسیده یا درخواست اطلاعات بیشتر کرده.")
                 else:
@@ -123,7 +113,6 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
             logger.error(f"خطای پیش‌بینی نشده در تابع ask_openrouter: {e}", exc_info=True)
             return "❌ مشکلی پیش‌بینی نشده در دریافت پاسخ پیش آمده است. لطفاً دوباره تلاش کنید."
 
-# --- کنترل‌کننده‌های مکالمه ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
     logger.info(f"کاربر {user.id} ({user.full_name if user.full_name else user.username}) ربات را با /start شروع کرد.")
@@ -195,11 +184,10 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
     else: 
         context.user_data["gender"] = "مرد"
         
-    age = context.user_data.get("age") # سن را هم از user_data بگیریم
+    age = context.user_data.get("age")
     gender = context.user_data.get("gender")
     logger.info(f"کاربر {user.id} جنسیت خود را '{gender}' وارد کرد (ورودی اولیه: '{gender_text}'). سن: {age}")
 
-    # ساخت پرامپت سیستمی پویا و ذخیره آن
     system_prompt_for_doctor = (
         f"شما یک پزشک عمومی متخصص، دقیق و همدل به نام 'دکتر تافته' هستید. کاربری که با شما صحبت می‌کند {age} ساله و {gender} است. "
         "وظیفه شما این است که از طریق یک مکالمه چند مرحله‌ای با کاربر، به سوالات پزشکی او به زبان فارسی پاسخ دهید. "
@@ -212,58 +200,56 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
         "همیشه محترمانه و صبور باشید."
     )
     context.user_data["system_prompt_for_doctor"] = system_prompt_for_doctor
-    context.user_data["doctor_chat_history"] = [] # شروع تاریخچه مکالمه جدید
+    context.user_data["doctor_chat_history"] = []
 
-    logger.info(f"پرامپت سیستمی برای دکتر تافته تنظیم شد: {system_prompt_for_doctor}")
+    logger.info(f"پرامپت سیستمی برای دکتر تافته تنظیم شد. تاریخچه مکالمه پاک شد.")
 
     await update.message.reply_text(
         f"✅ مشخصات شما ثبت شد:\n"
         f"سن: {age} سال\n"
         f"جنسیت: {gender}\n\n"
         "اکنون می‌توانید سوال پزشکی خود را از دکتر تافته بپرسید. دکتر تافته ممکن است برای ارائه پاسخ بهتر، سوالات بیشتری از شما بپرسد.",
-        reply_markup=DOCTOR_CONVERSATION_KEYBOARD # استفاده از منوی جدید
+        reply_markup=DOCTOR_CONVERSATION_KEYBOARD
     )
     return States.DOCTOR_CONVERSATION
 
 async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    # لاگ اضافه شده در ابتدای تابع
+    logger.info(f"--- DCH Entered --- User: {update.effective_user.id}, Text: '{update.message.text}', History items: {len(context.user_data.get('doctor_chat_history', []))}")
+    
     user_question = update.message.text
     user = update.effective_user
     
-    # بازیابی تاریخچه و پرامپت سیستمی از user_data
     chat_history = context.user_data.get("doctor_chat_history", [])
-    system_prompt = context.user_data.get("system_prompt_for_doctor", "خطا: پرامپت سیستمی یافت نشد.") # باید همیشه موجود باشد
+    system_prompt = context.user_data.get("system_prompt_for_doctor", "خطا: پرامپت سیستمی یافت نشد.")
 
-    if not system_prompt or "خطا:" in system_prompt : # بررسی اضافی برای اطمینان
-        logger.error(f"پرامپت سیستمی برای کاربر {user.id} یافت نشد یا ناقص است. بازگشت به منوی اصلی.")
-        await update.message.reply_text("مشکلی در شروع مکالمه با دکتر پیش آمده. لطفاً دوباره از منوی اصلی امتحان کنید.", reply_markup=MAIN_MENU_KEYBOARD)
+    if not system_prompt or "خطا:" in system_prompt : 
+        logger.error(f"DCH: System prompt issue for user {user.id}. Clearing data and returning to main menu.")
+        await update.message.reply_text("مشکلی در ادامه مکالمه با دکتر پیش آمده. لطفاً دوباره از منوی اصلی امتحان کنید.", reply_markup=MAIN_MENU_KEYBOARD)
         context.user_data.clear()
         return States.MAIN_MENU
 
-    # بررسی گزینه‌های منو در حالت مکالمه با دکتر
     if user_question == "🔙 بازگشت به منوی اصلی":
-        logger.info(f"کاربر {user.id} از مکالمه با دکتر به منوی اصلی بازگشت.")
+        logger.info(f"DCH: User {user.id} selected 'بازگشت به منوی اصلی'.")
         context.user_data.clear() 
         await update.message.reply_text("مکالمه با دکتر تافته پایان یافت. به منوی اصلی بازگشتید.", reply_markup=MAIN_MENU_KEYBOARD)
         return States.MAIN_MENU
     elif user_question == "❓ سوال جدید از دکتر":
-        logger.info(f"کاربر {user.id} درخواست سوال جدید از دکتر را دارد. تاریخچه مکالمه قبلی پاک می‌شود.")
-        context.user_data["doctor_chat_history"] = [] # فقط تاریخچه پاک می‌شود، سن و جنسیت و پرامپت سیستمی باقی می‌ماند
+        logger.info(f"DCH: User {user.id} selected 'سوال جدید از دکتر'. Clearing chat history.")
+        context.user_data["doctor_chat_history"] = [] 
         await update.message.reply_text("بسیار خب، تاریخچه مکالمه قبلی پاک شد. سوال پزشکی جدید خود را بپرسید:", reply_markup=DOCTOR_CONVERSATION_KEYBOARD)
         return States.DOCTOR_CONVERSATION
 
-    # اگر پیام کاربر، گزینه منو نبود، آن را به عنوان بخشی از مکالمه پردازش کن
-    logger.info(f"کاربر {user.id} در مکالمه با دکتر پیام داد: '{user_question}'")
+    logger.info(f"DCH: Processing conversational text from user {user.id}: '{user_question}'")
     
-    # افزودن پیام کاربر به تاریخچه
     chat_history.append({"role": "user", "content": user_question})
     
     await update.message.reply_text("⏳ دکتر تافته در حال بررسی پیام شماست، لطفاً کمی صبر کنید...")
 
     assistant_response = await ask_openrouter(system_prompt, chat_history)
     
-    # افزودن پاسخ دستیار به تاریخچه
     chat_history.append({"role": "assistant", "content": assistant_response})
-    context.user_data["doctor_chat_history"] = chat_history # ذخیره تاریخچه به‌روز شده
+    context.user_data["doctor_chat_history"] = chat_history
 
     await update.message.reply_text(assistant_response, parse_mode="Markdown", reply_markup=DOCTOR_CONVERSATION_KEYBOARD)
     return States.DOCTOR_CONVERSATION
@@ -281,10 +267,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
 
 async def fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    # تلاش برای به دست آوردن حالت فعلی از ConversationHandler (اگر در مکالمه باشد)
-    # این بخش ممکن است نیاز به بررسی بیشتر داشته باشد که آیا state به درستی از context قابل خواندن است یا خیر
-    current_conv_state = context. conversación_state if hasattr(context, 'conversation_state') else 'نامشخص'
-    logger.warning(f"کاربر {user.id} پیام نامعتبر '{update.message.text}' در حالت مکالمه '{current_conv_state}' یا خارج از آن ارسال کرد.")
+    # لاگ user_data اضافه شده
+    logger.warning(f"--- GLOBAL FALLBACK Reached --- User: {user.id}, Text: '{update.message.text}', Current user_data: {context.user_data}")
     await update.message.reply_text(
         "متوجه نشدم چه گفتید. لطفاً از گزینه‌های منو استفاده کنید یا اگر در مرحله خاصی هستید، ورودی مورد انتظار را ارسال نمایید.",
         reply_markup=MAIN_MENU_KEYBOARD
@@ -331,7 +315,6 @@ if __name__ == '__main__':
                 MessageHandler(filters.TEXT & ~filters.COMMAND, request_gender_handler)
             ],
             States.DOCTOR_CONVERSATION: [
-                # ابتدا گزینه‌های منو را بررسی می‌کنیم، سپس پیام‌های متنی دیگر
                 MessageHandler(filters.Regex("^(❓ سوال جدید از دکتر|🔙 بازگشت به منوی اصلی)$"), doctor_conversation_handler),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, doctor_conversation_handler)
             ],
@@ -339,7 +322,7 @@ if __name__ == '__main__':
         fallbacks=[
             CommandHandler("cancel", cancel),
             CommandHandler("start", start),
-            MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start), # فال‌بک عمومی برای اطمینان
+            MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start),
         ],
         persistent=False,
         name="main_conversation"
