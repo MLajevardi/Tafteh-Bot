@@ -15,18 +15,21 @@ from telegram.ext import (
     filters,
     ContextTypes,
     ConversationHandler,
-    Application # برای دسترسی به application در بخش خاموش شدن
+    Application
 )
 
 # بارگذاری متغیرهای محیطی از فایل .env
 load_dotenv()
 
-# تنظیمات لاگ‌گیری
+# تنظیمات لاگ‌گیری در ابتدای برنامه
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[logging.StreamHandler()] # اطمینان از خروجی به کنسول
 )
 logger = logging.getLogger(__name__)
+
+logger.info("اسکریپت main.py شروع به کار کرد. در حال بررسی متغیرهای محیطی...")
 
 # توکن‌ها و تنظیمات از متغیرهای محیطی
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
@@ -37,11 +40,16 @@ URL_TAFTEH_WEBSITE = "https://tafteh.ir/"
 
 # بررسی وجود توکن‌های ضروری
 if not TELEGRAM_TOKEN:
-    logger.error("توکن تلگرام (BOT_TOKEN) در متغیرهای محیطی یافت نشد.")
-    exit()
+    logger.error("!!! بحرانی: توکن تلگرام (BOT_TOKEN) در متغیرهای محیطی یافت نشد. برنامه خارج می‌شود.")
+    exit(1) # خروج با کد خطا
+else:
+    logger.info("توکن تلگرام با موفقیت بارگذاری شد.")
+
 if not OPENROUTER_API_KEY:
-    logger.error("کلید API اوپن‌روتر (OPENROUTER_API_KEY) در متغیرهای محیطی یافت نشد.")
-    exit()
+    logger.error("!!! بحرانی: کلید API اوپن‌روتر (OPENROUTER_API_KEY) در متغیرهای محیطی یافت نشد. برنامه خارج می‌شود.")
+    exit(1) # خروج با کد خطا
+else:
+    logger.info("کلید API اوپن‌روتر با موفقیت بارگذاری شد.")
 
 # تعریف حالت‌های مکالمه
 class States(Enum):
@@ -67,9 +75,11 @@ async def ask_openrouter(prompt: str, age: int = None, gender: str = None) -> st
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
+    # اصلاح پرامپت سیستمی
     system_message_content = (
         "شما یک پزشک عمومی متخصص هستید. لطفاً به تمام سوالات پزشکی کاربران به زبان فارسی، دقیق، علمی، محترمانه و ساده پاسخ دهید. "
-        "از دادن توصیه‌های غیرپزشکی خودداری کنید. اگر سوالی کاملا غیرپزشکی بود، به کاربر اطلاع دهید که فقط به سوالات پزشکی پاسخ می‌دهید."
+        "از دادن توصیه‌های غیرپزشکی خودداری کنید. اگر سوالی کاملا غیرپزشکی بود، به کاربر اطلاع دهید که فقط به سوالات پزشکی پاسخ می‌دهید. "
+        "پاسخ‌های خود را مستقیماً و بدون هیچگونه مقدمه‌ای مانند 'بله'، 'خب'، 'البته' یا مشابه آن شروع کنید."
     )
     user_message = f"کاربر {age if age else ''} ساله و جنسیت {gender if gender else ''} دارد و می‌پرسد: {prompt}" if age and gender else prompt
 
@@ -226,16 +236,69 @@ flask_app = Flask(__name__)
 @flask_app.route('/')
 def health_check():
     """یک اندپوینت ساده برای اینکه Render تشخیص دهد سرویس فعال است و به پورت گوش می‌دهد."""
+    # این لاگ در هر بار دسترسی به این اندپوینت توسط Render ثبت می‌شود
+    logger.info("درخواست Health Check به اندپوینت '/' Flask دریافت شد.")
     return 'ربات تلگرام تافته فعال است و به پورت گوش می‌دهد!', 200
 
 def run_flask_app():
     """Flask app را در پورتی که Render مشخص می‌کند اجرا می‌کند."""
-    # Render پورت را از طریق متغیر محیطی PORT تنظیم می‌کند.
-    port = int(os.environ.get('PORT', 8080)) # استفاده از 8080 به عنوان پیش‌فرض اگر PORT تنظیم نشده باشد (برای تست محلی)
-    logger.info(f"وب سرور Flask روی هاست 0.0.0.0 و پورت {port} شروع به کار می‌کند.")
-    flask_app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get('PORT', 8080))
+    # این لاگ مهم است: نشان می‌دهد که ترد Flask سعی در شروع وب سرور دارد
+    logger.info(f"ترد Flask: در حال تلاش برای شروع وب سرور روی هاست 0.0.0.0 و پورت {port}")
+    try:
+        flask_app.run(host='0.0.0.0', port=port)
+        logger.info(f"ترد Flask: وب سرور Flask روی پورت {port} متوقف شد.") # اگر run به هر دلیلی خاتمه یابد
+    except Exception as e:
+        logger.error(f"ترد Flask: خطایی در اجرای وب سرور Flask رخ داد: {e}", exc_info=True)
 
-# --- تابع اصلی ربات ---
-async def run_telegram_bot(app_for_shutdown: Application):
-    """ساخت و اجرای ربات تلگرام."""
-    # app_for_shutdown به
+
+# --- مدیریت اجرای همزمان Flask و ربات ---
+if __name__ == '__main__':
+    logger.info("بلوک اصلی برنامه (__name__ == '__main__') شروع شد.")
+    
+    logger.info("در حال تنظیم و شروع ترد Flask...")
+    flask_thread = threading.Thread(target=run_flask_app, name="FlaskThread")
+    flask_thread.daemon = True # با بسته شدن برنامه اصلی، ترد هم بسته شود
+    flask_thread.start()
+    logger.info("ترد Flask شروع به کار کرد.")
+
+    logger.info("در حال ساخت اپلیکیشن ربات تلگرام...")
+    telegram_application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    # تعریف ConversationHandler
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            States.MAIN_MENU: [
+                MessageHandler(filters.Regex("^(👨‍⚕️ دکتر تافته|📦 راهنمای محصولات)<span class="math-inline">"\), main\_menu\_handler\),
+MessageHandler\(filters\.Regex\("^🔙 بازگشت به منوی اصلی</span>"), start)
+            ],
+            States.AWAITING_AGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, request_age_handler)
+            ],
+            States.AWAITING_GENDER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, request_gender_handler)
+            ],
+            States.DOCTOR_CONVERSATION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, doctor_conversation_handler)
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start),
+        ],
+    )
+
+    telegram_application.add_handler(conv_handler)
+    telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
+    
+    logger.info("ربات تلگرام در حال شروع polling (این یک عملیات بلاک کننده است)...")
+    try:
+        telegram_application.run_polling()
+        # این خط فقط زمانی اجرا می‌شود که run_polling به طور صحیح خاتمه یابد (مثلاً با سیگنال خارجی)
+        logger.info("Polling ربات تلگرام متوقف شد.")
+    except Exception as e:
+        logger.error(f"خطایی در حین اجرای run_polling رخ داد: {e}", exc_info=True)
+    finally:
+        logger.info("برنامه در حال بسته شدن است. ترد Flask نیز به دلیل daemon=True بسته خواهد شد.")
