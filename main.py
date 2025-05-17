@@ -186,7 +186,7 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
     gender = context.user_data.get("gender")
     logger.info(f"کاربر {user.id} جنسیت خود را '{gender}' وارد کرد (ورودی اولیه: '{gender_text}'). سن: {age}")
 
-    # پرامپت سیستمی جدید و اصلاح شده
+    # پرامپت سیستمی بهبود یافته برای مکالمه بهتر
     system_prompt_for_doctor = (
         f"شما یک پزشک عمومی متخصص، دقیق، صبور و همدل به نام 'دکتر تافته' هستید. کاربری که با شما صحبت می‌کند {age} ساله و {gender} است. "
         "وظیفه شما این است که از طریق یک مکالمه چند مرحله‌ای با کاربر، به سوالات پزشکی او به زبان فارسی پاسخ دهید. "
@@ -289,7 +289,7 @@ def run_flask_app():
     logger.info(f"ترد Flask: در حال تلاش برای شروع وب سرور روی هاست 0.0.0.0 و پورت {port}")
     try:
         flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-        logger.info(f"ترد Flask: وب سرور Flask روی پورت {port} متوقف شد.")
+        logger.info(f"ترد Flask: وب سرور Flask روی پورت {port} متوقف شد.") # این پیام معمولا دیده نمی‌شود
     except Exception as e:
         logger.error(f"ترد Flask: خطایی در اجرای وب سرور Flask رخ داد: {e}", exc_info=True)
 
@@ -335,4 +335,13 @@ if __name__ == '__main__':
     telegram_application.add_handler(conv_handler)
     telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
     
-    logger.info("ربات تلگرام در حال شروع polling
+    logger.info("ربات تلگرام در حال شروع polling (این یک عملیات بلاک کننده است)...") # این خط ۳۳۸ است
+    try:
+        telegram_application.run_polling(allowed_updates=Update.ALL_TYPES)
+        logger.info("Polling ربات تلگرام متوقف شد.")
+    except KeyboardInterrupt:
+        logger.info("درخواست توقف (KeyboardInterrupt) دریافت شد. ربات در حال خاموش شدن...")
+    except Exception as e:
+        logger.error(f"خطایی در حین اجرای run_polling یا در زمان کار ربات رخ داد: {e}", exc_info=True)
+    finally:
+        logger.info("برنامه در حال بسته شدن است. ترد Flask نیز به دلیل daemon=True بسته خواهد شد.")
