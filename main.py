@@ -28,33 +28,23 @@ load_dotenv()
 # مقداردهی اولیه Firebase Admin SDK در ابتدای برنامه
 db = None # تعریف اولیه db به عنوان None
 try:
-    # مسیر فایل کلید در محیط Render (اگر از Secret File استفاده می‌کنید)
-    # شما می‌توانید این مسیر را از طریق متغیر محیطی FIREBASE_CREDENTIALS_PATH نیز تنظیم کنید
     cred_path_render = os.getenv("FIREBASE_CREDENTIALS_PATH", "/etc/secrets/firebase-service-account-key.json")
-    # مسیر فایل کلید برای اجرای محلی (فایل را کنار main.py قرار دهید و در .gitignore اضافه کنید)
     cred_path_local = "firebase-service-account-key.json" 
-
     cred_path = cred_path_render if os.path.exists(cred_path_render) else cred_path_local
     
     if not os.path.exists(cred_path):
-        # این لاگ در سطح INFO است تا در صورت عدم وجود فایل کلید، برنامه همچنان بتواند (بدون دیتابیس) اجرا شود
-        # البته در حالت عملیاتی، نبود دیتابیس مشکل‌ساز خواهد بود.
         logging.warning(f"فایل کلید Firebase در مسیر '{cred_path}' یافت نشد. ربات بدون اتصال به دیتابیس اجرا خواهد شد (اگر منطق برنامه اجازه دهد).")
     else:
         cred = credentials.Certificate(cred_path)
-        if not firebase_admin._apps: # جلوگیری از مقداردهی اولیه مجدد اگر قبلا انجام شده
+        if not firebase_admin._apps: 
             firebase_admin.initialize_app(cred)
-        db = firestore.client() # نمونه کلاینت Firestore
+        db = firestore.client() 
         logging.info("Firebase Admin SDK با موفقیت مقداردهی اولیه شد و به Firestore متصل است.")
 except Exception as e:
-    # استفاده از logging.error برای خطاهای جدی
     logging.error(f"خطای بحرانی در مقداردهی اولیه Firebase Admin SDK: {e}", exc_info=True)
-    # در صورت بروز خطا در اتصال به دیتابیس، ربات ممکن است نتواند به درستی کار کند.
-    # می‌توانید تصمیم بگیرید که آیا برنامه باید خارج شود یا با قابلیت محدود ادامه دهد.
-    # exit(1) # یا مدیریت خطا به شکل دیگر
 
 
-# تنظیمات لاگ‌گیری پس از مقداردهی اولیه Firebase (اگر لاگر خاصی برای Firebase استفاده نمی‌شود، ترتیب مهم نیست)
+# تنظیمات لاگ‌گیری پس از مقداردهی اولیه Firebase
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -149,7 +139,6 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
             return "❌ مشکلی پیش‌بینی نشده در دریافت پاسخ پیش آمده است. لطفاً دوباره تلاش کنید."
 
 def _prepare_doctor_system_prompt(age: int, gender: str) -> str:
-    """تابع کمکی برای ساخت پرامپت سیستمی دکتر تافته با آخرین اصلاحات برای کنترل لحن و پرسشگری."""
     return (
         f"شما یک پزشک عمومی متخصص، بسیار دقیق، با دانش به‌روز، صبور و همدل به نام 'دکتر تافته' هستید. کاربری که با شما صحبت می‌کند {age} ساله و {gender} است. "
         "وظیفه شما ارائه راهنمایی پزشکی اولیه از طریق یک مکالمه چند مرحله‌ای هدفمند به زبان فارسی روان، صحیح، علمی و قابل فهم برای عموم است. شما هرگز تشخیص قطعی نمی‌دهید و دارو تجویز نمی‌کنید، بلکه اطلاعات اولیه را جمع‌آوری کرده، توصیه‌های عمومی و ایمن ارائه می‌دهید و در صورت لزوم کاربر را به مراجعه به پزشک راهنمایی می‌کنید."
@@ -173,12 +162,9 @@ def _prepare_doctor_system_prompt(age: int, gender: str) -> str:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
-    user_id_str = str(user.id) # user_id را به رشته تبدیل می‌کنیم برای سازگاری با Firestore
+    user_id_str = str(user.id) 
     logger.info(f"کاربر {user_id_str} ({user.full_name if user.full_name else user.username}) /start را فراخوانی کرد یا به منوی اصلی بازگشت.")
     
-    # در اینجا دیگر سن و جنسیت را از user_data حفظ نمی‌کنیم، چون از دیتابیس خوانده خواهند شد
-    # یا اگر نباشند، مجددا پرسیده و در دیتابیس ذخیره می‌شوند.
-    # فقط اطلاعات مربوط به مکالمه دکتر (اگر وجود دارد) را پاک می‌کنیم.
     if "doctor_chat_history" in context.user_data:
         del context.user_data["doctor_chat_history"]
         logger.info(f"تاریخچه مکالمه دکتر برای کاربر {user_id_str} پاک شد.")
@@ -186,14 +172,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
         del context.user_data["system_prompt_for_doctor"]
         logger.info(f"پرامپت سیستمی دکتر برای کاربر {user_id_str} پاک شد.")
     
-    # اگر کاربر برای اولین بار است یا اطلاعاتش کامل نیست، در get_or_create_user_profile مدیریت می‌شود
-    if db: # فقط اگر اتصال به دیتابیس موفقیت‌آمیز بوده
+    if db: 
         try:
-            # اجرای عملیات دیتابیس در یک ترد جداگانه تا عملیات async بلاک نشود
             await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
         except Exception as e:
             logger.error(f"خطا در get_or_create_user_profile برای کاربر {user_id_str} در تابع start: {e}", exc_info=True)
-
 
     try:
         await context.bot.send_photo(
@@ -218,9 +201,8 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if text == "👨‍⚕️ دکتر تافته":
         age, gender = None, None
-        if db: # فقط اگر اتصال به دیتابیس موفقیت‌آمیز بوده
+        if db: 
             try:
-                # اجرای عملیات دیتابیس در یک ترد جداگانه
                 user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
                 if user_profile:
                     age = user_profile.get("age")
@@ -243,6 +225,9 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return States.DOCTOR_CONVERSATION
         else: 
             logger.info(f"سن یا جنسیت برای کاربر {user_id_str} در دیتابیس موجود نیست یا کامل نیست. درخواست سن.")
+            # پاک کردن مقادیر احتمالی ناقص از user_data قبل از پرسیدن مجدد
+            if "age" in context.user_data: del context.user_data["age"]
+            if "gender" in context.user_data: del context.user_data["gender"]
             await update.message.reply_text(
                 "بسیار خب. برای اینکه بتوانم بهتر به شما کمک کنم، لطفاً سن خود را وارد کنید:",
                 reply_markup=ReplyKeyboardRemove() 
@@ -273,7 +258,6 @@ async def request_age_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❗️ لطفاً یک سن معتبر (عدد بین ۱ تا ۱۲۰) وارد کنید.")
         return States.AWAITING_AGE 
 
-    # ذخیره موقت سن در user_data تا در مرحله بعد جنسیت پرسیده شود
     context.user_data["age_temp"] = int(age_text) 
     logger.info(f"کاربر {user_id_str} سن موقت خود را {age_text} وارد کرد.")
     await update.message.reply_text("متشکرم. حالا لطفاً جنسیت خود را انتخاب کنید:", reply_markup=GENDER_SELECTION_KEYBOARD)
@@ -284,25 +268,22 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
     user = update.effective_user
     user_id_str = str(user.id)
     
-    age = context.user_data.pop("age_temp", None) # خواندن و حذف سن موقت
+    age = context.user_data.pop("age_temp", None) 
     if not age:
         logger.error(f"خطا: سن موقت برای کاربر {user_id_str} یافت نشد. بازگشت به منوی اصلی.")
         await update.message.reply_text("مشکلی در پردازش اطلاعات پیش آمد. لطفاً دوباره تلاش کنید.", reply_markup=MAIN_MENU_KEYBOARD)
-        return await start(update, context) # بازگشت امن به منوی اصلی
+        return await start(update, context) 
 
-    gender = gender_input # "زن" یا "مرد"
+    gender = gender_input 
     
-    if db: # ذخیره سن و جنسیت در دیتابیس
+    if db: 
         try:
-            # اجرای عملیات دیتابیس در یک ترد جداگانه
             await asyncio.to_thread(update_user_profile_data, user_id_str, {"age": age, "gender": gender})
             logger.info(f"سن ({age}) و جنسیت ({gender}) کاربر {user_id_str} در دیتابیس ذخیره/به‌روز شد.")
         except Exception as e:
             logger.error(f"خطا در ذخیره سن/جنسیت کاربر {user_id_str} در دیتابیس: {e}", exc_info=True)
-            # ادامه بدون دیتابیس در این جلسه خاص، اما به کاربر اطلاع داده نمی‌شود تا تجربه کاربری مختل نشود
 
-    # ذخیره در user_data برای استفاده در همین جلسه (برای ساخت پرامپت)
-    context.user_data["age"] = age
+    context.user_data["age"] = age # ذخیره در user_data برای استفاده در همین جلسه
     context.user_data["gender"] = gender
     logger.info(f"کاربر {user_id_str} جنسیت خود را '{gender}' انتخاب کرد. سن: {age}")
 
@@ -332,8 +313,7 @@ async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFA
     system_prompt = context.user_data.get("system_prompt_for_doctor")
 
     if not system_prompt: 
-        logger.warning(f"DCH: System prompt for user {user_id_str} not found in user_data! Attempting to rebuild from DB or ask again.")
-        # سعی در بازسازی پرامپت از دیتابیس یا درخواست مجدد سن/جنسیت
+        logger.warning(f"DCH: System prompt for user {user_id_str} not found in user_data! Attempting to rebuild.")
         age_db, gender_db = None, None
         if db:
             try:
@@ -347,18 +327,20 @@ async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFA
         if age_db and gender_db:
             system_prompt = _prepare_doctor_system_prompt(age_db, gender_db)
             context.user_data["system_prompt_for_doctor"] = system_prompt
-            context.user_data["age"] = age_db # اطمینان از وجود در user_data
+            context.user_data["age"] = age_db 
             context.user_data["gender"] = gender_db
             logger.info(f"DCH: System prompt for user {user_id_str} rebuilt from DB data.")
         else:
             logger.error(f"DCH: Could not rebuild system prompt for user {user_id_str}. Age/Gender missing. Returning to main menu.")
             await update.message.reply_text("مشکلی در بازیابی اطلاعات شما پیش آمده. لطفاً از ابتدا با انتخاب 'دکتر تافته' شروع کنید.", reply_markup=MAIN_MENU_KEYBOARD)
-            return await start(update, context)
+            # پاک کردن اطلاعات ناقص احتمالی دکتر از user_data
+            if "doctor_chat_history" in context.user_data: del context.user_data["doctor_chat_history"]
+            if "system_prompt_for_doctor" in context.user_data: del context.user_data["system_prompt_for_doctor"]
+            return await start(update, context) # بازگشت کامل به منوی اصلی با پاکسازی انتخابی
 
 
     if user_question == "🔙 بازگشت به منوی اصلی":
         logger.info(f"DCH: User {user_id_str} selected 'بازگشت به منوی اصلی'. Delegating to start handler.")
-        # تابع start تاریخچه مکالمه دکتر را پاک خواهد کرد
         return await start(update, context) 
     elif user_question == "❓ سوال جدید از دکتر":
         logger.info(f"DCH: User {user_id_str} selected 'سوال جدید از دکتر'. Clearing chat history.")
@@ -394,31 +376,26 @@ async def fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reply_markup=MAIN_MENU_KEYBOARD
     )
 
-# --- توابع مربوط به دیتابیس Firestore ---
 def get_or_create_user_profile(user_id: str, username: str = None, first_name: str = None) -> dict:
-    """
-    اطلاعات کاربر را از Firestore می‌خواند. اگر کاربر وجود نداشته باشد، پروفایل جدیدی برای او ایجاد می‌کند.
-    اطلاعات اولیه شامل سن و جنسیت خالی خواهد بود.
-    """
     if not db:
-        logger.warning(f"Firestore client (db) is None. Cannot access profile for user {user_id}.")
-        return {"user_id": user_id, "username": username, "first_name": first_name} # بازگشت اطلاعات پایه بدون دیتابیس
+        logger.warning(f"DB: Firestore client (db) is None. Cannot access profile for user {user_id}.")
+        return {"user_id": user_id, "username": username, "first_name": first_name, "age": None, "gender": None}
 
     user_ref = db.collection('users').document(user_id)
     user_doc = user_ref.get()
 
     if user_doc.exists:
-        logger.info(f"پروفایل کاربر {user_id} از Firestore خوانده شد.")
+        logger.info(f"DB: پروفایل کاربر {user_id} از Firestore خوانده شد.")
         return user_doc.to_dict()
     else:
-        logger.info(f"پروفایل جدیدی برای کاربر {user_id} در Firestore ایجاد می‌شود.")
+        logger.info(f"DB: پروفایل جدیدی برای کاربر {user_id} در Firestore ایجاد می‌شود.")
         user_data = {
             'user_id': user_id,
             'username': username if username else None,
             'first_name': first_name if first_name else None,
-            'registration_date': firestore.SERVER_TIMESTAMP, # تاریخ و زمان فعلی سرور
-            'age': None, # در ابتدا خالی
-            'gender': None, # در ابتدا خالی
+            'registration_date': firestore.SERVER_TIMESTAMP,
+            'age': None, 
+            'gender': None, 
             'is_club_member': False,
             'points': 0,
             'badges': [],
@@ -428,21 +405,18 @@ def get_or_create_user_profile(user_id: str, username: str = None, first_name: s
         return user_data
 
 def update_user_profile_data(user_id: str, data_to_update: dict) -> None:
-    """اطلاعات پروفایل کاربر را در Firestore به‌روز می‌کند."""
     if not db:
-        logger.warning(f"Firestore client (db) is None. Cannot update profile for user {user_id}.")
+        logger.warning(f"DB: Firestore client (db) is None. Cannot update profile for user {user_id}.")
         return
 
     user_ref = db.collection('users').document(user_id)
-    # افزودن فیلد برای تاریخ آخرین به‌روزرسانی
     data_to_update['last_updated_date'] = firestore.SERVER_TIMESTAMP
-    user_ref.update(data_to_update) # از set با merge=True هم می‌توان استفاده کرد
-    logger.info(f"پروفایل کاربر {user_id} با داده‌های {data_to_update} در Firestore به‌روز شد.")
+    user_ref.update(data_to_update)
+    logger.info(f"DB: پروفایل کاربر {user_id} با داده‌های {data_to_update} در Firestore به‌روز شد.")
 
 def get_user_profile_data(user_id: str) -> dict | None:
-    """اطلاعات کامل پروفایل کاربر را از Firestore می‌خواند."""
     if not db:
-        logger.warning(f"Firestore client (db) is None. Cannot get profile for user {user_id}.")
+        logger.warning(f"DB: Firestore client (db) is None. Cannot get profile for user {user_id}.")
         return None
         
     user_ref = db.collection('users').document(user_id)
@@ -451,8 +425,6 @@ def get_user_profile_data(user_id: str) -> dict | None:
         return user_doc.to_dict()
     return None
 
-
-# --- بخش وب سرور Flask ---
 flask_app = Flask(__name__)
 @flask_app.route('/')
 def health_check():
@@ -468,7 +440,6 @@ def run_flask_app():
     except Exception as e:
         logger.error(f"ترد Flask: خطایی در اجرای وب سرور Flask رخ داد: {e}", exc_info=True)
 
-# --- مدیریت اجرای همزمان Flask و ربات ---
 if __name__ == '__main__':
     logger.info("بلوک اصلی برنامه (__name__ == '__main__') شروع شد.")
     
@@ -512,8 +483,20 @@ if __name__ == '__main__':
             CommandHandler("start", start), 
             MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start), 
         ],
-        persistent=False, # برای سادگی، حالت‌های مکالمه در حافظه هستند و بین ری‌استارت‌ها ذخیره نمی‌شوند
+        persistent=False,
         name="main_conversation"
     )
 
-    telegram_application.
+    telegram_application.add_handler(conv_handler)
+    telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
+    
+    logger.info("ربات تلگرام در حال شروع polling (این یک عملیات بلاک کننده است)...") # این تقریباً خط ۵۱۹ است
+    try:
+        telegram_application.run_polling(allowed_updates=Update.ALL_TYPES)
+        logger.info("Polling ربات تلگرام متوقف شد.")
+    except KeyboardInterrupt:
+        logger.info("درخواست توقف (KeyboardInterrupt) دریافت شد. ربات در حال خاموش شدن...")
+    except Exception as e:
+        logger.error(f"خطایی در حین اجرای run_polling یا در زمان کار ربات رخ داد: {e}", exc_info=True)
+    finally:
+        logger.info("برنامه در حال بسته شدن است. ترد Flask نیز به دلیل daemon=True بسته خواهد شد.")
