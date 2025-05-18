@@ -22,10 +22,8 @@ from telegram.ext import (
     Application
 )
 
-# بارگذاری متغیرهای محیطی از فایل .env (برای اجرای محلی مفید است)
 load_dotenv()
 
-# مقداردهی اولیه Firebase Admin SDK در ابتدای برنامه
 db = None 
 try:
     cred_path_render = os.getenv("FIREBASE_CREDENTIALS_PATH", "/etc/secrets/firebase-service-account-key.json")
@@ -42,7 +40,6 @@ try:
         logging.info("Firebase Admin SDK با موفقیت مقداردهی اولیه شد و به Firestore متصل است.")
 except Exception as e:
     logging.error(f"خطای بحرانی در مقداردهی اولیه Firebase Admin SDK: {e}", exc_info=True)
-
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -78,7 +75,7 @@ class States(Enum):
     DOCTOR_CONVERSATION = 4
 
 MAIN_MENU_KEYBOARD = ReplyKeyboardMarkup(
-    [["👨‍⚕️ دکتر تافته", "📦 راهنمای محصولات"], ["⭐ عضویت/وضعیت باشگاه مشتریان"]], # دکمه جدید اضافه شد
+    [["👨‍⚕️ دکتر تافته", "📦 راهنمای محصولات"], ["⭐ عضویت/وضعیت باشگاه مشتریان"]],
     resize_keyboard=True
 )
 
@@ -123,10 +120,9 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
             else:
                 logger.error(f"ساختار پاسخ دریافت شده از OpenRouter نامعتبر یا فاقد محتوا است: {data}")
                 return "❌ مشکلی در پردازش پاسخ از سرویس پزشک مجازی رخ داد."
-        except Exception as e: # مدیریت کلی‌تر خطاها برای بازگرداندن پیام مناسب
+        except Exception as e: 
             logger.error(f"خطا در ارتباط یا پردازش پاسخ OpenRouter: {e}", exc_info=True)
             return "❌ بروز خطا در ارتباط با سرویس پزشک مجازی. لطفاً مجدداً تلاش نمایید."
-
 
 def _prepare_doctor_system_prompt(age: int, gender: str) -> str:
     return (
@@ -190,9 +186,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if db: 
             try:
                 user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
-                if user_profile: # اطمینان از اینکه پروفایل وجود دارد
-                    # اگر get_or_create_user_profile در start فراخوانی شده باشد، پروفایل باید وجود داشته باشد
-                    # مگر اینکه اولین بار باشد و get_or_create_user_profile در start به خطا خورده باشد
+                if user_profile: 
                     age = user_profile.get("age")
                     gender = user_profile.get("gender")
             except Exception as e:
@@ -213,7 +207,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return States.DOCTOR_CONVERSATION
         else: 
             logger.info(f"سن یا جنسیت برای کاربر {user_id_str} در دیتابیس موجود نیست یا کامل نیست. درخواست سن.")
-            if "age" in context.user_data: del context.user_data["age"] # پاک کردن مقادیر ناقص احتمالی user_data
+            if "age" in context.user_data: del context.user_data["age"] 
             if "gender" in context.user_data: del context.user_data["gender"]
             await update.message.reply_text(
                 "بسیار خب. برای اینکه بتوانم بهتر به شما کمک کنم، لطفاً سن خود را وارد کنید:",
@@ -229,7 +223,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             reply_markup=reply_markup_inline
         )
         return States.MAIN_MENU
-    elif text == "⭐ عضویت/وضعیت باشگاه مشتریان": # کنترل دکمه جدید
+    elif text == "⭐ عضویت/وضعیت باشگاه مشتریان": 
         return await club_status_or_join_handler(update, context)
     else: 
         await update.message.reply_text(
@@ -286,7 +280,7 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
         f"✅ مشخصات شما ثبت شد:\n"
         f"سن: {age} سال\n"
         f"جنسیت: {gender}\n\n"
-        "اکنون می‌توانید سوال پزشکی خود را از دکتر تافته بپرسید.", # بخش "دکتر ممکن است سوالات بیشتری بپرسد" حذف شد چون در پرامپت هست
+        "اکنون می‌توانید سوال پزشکی خود را از دکتر تافته بپرسید.",
         reply_markup=DOCTOR_CONVERSATION_KEYBOARD
     )
     return States.DOCTOR_CONVERSATION
@@ -363,15 +357,13 @@ async def fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reply_markup=MAIN_MENU_KEYBOARD
     )
 
-# --- توابع مربوط به باشگاه مشتریان ---
 async def club_status_or_join_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
-    """وضعیت عضویت کاربر را نشان می‌دهد یا گزینه عضویت را پیشنهاد می‌کند."""
     user = update.effective_user
     user_id_str = str(user.id)
     logger.info(f"کاربر {user_id_str} گزینه 'عضویت/وضعیت باشگاه مشتریان' را انتخاب کرد.")
 
     if not db:
-        await update.message.reply_text("متاسفانه در حال حاضر امکان دسترسی به سیستم باشگاه مشتریان وجود ندارد. لطفاً بعداً تلاش کنید.", reply_markup=MAIN_MENU_KEYBOARD)
+        await update.message.reply_text("متاسفانه در حال حاضر امکان دسترسی به سیستم باشگاه مشتریان وجود ندارد.", reply_markup=MAIN_MENU_KEYBOARD)
         return States.MAIN_MENU
 
     try:
@@ -381,25 +373,16 @@ async def club_status_or_join_handler(update: Update, context: ContextTypes.DEFA
             points = user_profile.get('points', 0)
             await update.message.reply_text(f"شما عضو باشگاه مشتریان تافته هستید! 🏅\nامتیاز فعلی شما: {points} امتیاز.", reply_markup=MAIN_MENU_KEYBOARD)
         else:
-            join_club_keyboard = ReplyKeyboardMarkup([["بله، مایلم عضو شوم"], ["نه، فعلاً نه"]], resize_keyboard=True, one_time_keyboard=True)
             await update.message.reply_text(
-                "شما هنوز عضو باشگاه مشتریان تافته نیستید. آیا مایل به عضویت و بهره‌مندی از مزایا و امتیازات ویژه هستید؟",
-                reply_markup=join_club_keyboard
+                "شما هنوز عضو باشگاه مشتریان تافته نیستید.\n"
+                "برای عضویت و بهره‌مندی از مزایا و امتیازات ویژه، لطفاً دستور /joinclub را ارسال کنید.",
+                reply_markup=MAIN_MENU_KEYBOARD
             )
-            # می‌توان یک حالت جدید برای انتظار پاسخ به این سوال تعریف کرد یا از همینجا مدیریت کرد
-            # برای سادگی فعلا به MAIN_MENU برمی‌گردیم و کاربر باید با دستور /joinclub عضو شود
-            # یا اینکه یک ConversationHandler جدا برای این بخش داشته باشیم.
-            # فعلا ساده نگه می‌داریم:
-            # return States.AWAITING_CLUB_JOIN_DECISION # (نیاز به تعریف حالت و کنترل کننده جدید)
-            # یا
-            await update.message.reply_text("برای عضویت می‌توانید دستور /joinclub را نیز ارسال کنید.", reply_markup=MAIN_MENU_KEYBOARD)
-
-
     except Exception as e:
         logger.error(f"خطا در پردازش وضعیت/عضویت باشگاه برای کاربر {user_id_str}: {e}", exc_info=True)
         await update.message.reply_text("متاسفانه مشکلی در بررسی وضعیت عضویت شما پیش آمد.", reply_markup=MAIN_MENU_KEYBOARD)
     
-    return States.MAIN_MENU # پس از نمایش وضعیت یا پیشنهاد، به منوی اصلی بازمی‌گردد
+    return States.MAIN_MENU
 
 async def join_club_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -411,25 +394,46 @@ async def join_club_command_handler(update: Update, context: ContextTypes.DEFAUL
         return
 
     try:
-        user_profile = await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name) # اطمینان از وجود پروفایل
+        user_profile = await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
         
         if user_profile and user_profile.get('is_club_member', False):
             await update.message.reply_text("شما از قبل عضو باشگاه مشتریان تافته هستید! 🎉")
         else:
-            new_points = 50 # امتیاز برای عضویت
+            new_points = 50 
             await asyncio.to_thread(update_user_profile_data, user_id_str, {"is_club_member": True, "points": firestore.Increment(new_points)})
             logger.info(f"کاربر {user_id_str} با موفقیت به باشگاه مشتریان پیوست و {new_points} امتیاز دریافت کرد.")
             await update.message.reply_text(
                 f"عضویت شما در باشگاه مشتریان تافته با موفقیت انجام شد! ✨\n"
                 f"به شما {new_points} امتیاز عضویت تعلق گرفت. از همراهی شما سپاسگزاریم.",
-                reply_markup=MAIN_MENU_KEYBOARD # بازگشت به منوی اصلی
+                reply_markup=MAIN_MENU_KEYBOARD 
             )
     except Exception as e:
         logger.error(f"خطا در پردازش عضویت باشگاه برای کاربر {user_id_str}: {e}", exc_info=True)
         await update.message.reply_text("متاسفانه مشکلی در فرآیند عضویت شما پیش آمد. لطفاً بعداً دوباره تلاش کنید.")
 
+async def club_status_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None: # تابع اضافه شده برای /clubstatus
+    user = update.effective_user
+    user_id_str = str(user.id)
+    logger.info(f"کاربر {user_id_str} درخواست وضعیت عضویت در باشگاه را با /clubstatus داد.")
 
-# --- توابع مربوط به دیتابیس Firestore ---
+    if not db:
+        await update.message.reply_text("متاسفانه در حال حاضر امکان بررسی وضعیت عضویت وجود ندارد.")
+        return
+
+    try:
+        user_profile = await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name) 
+        
+        if user_profile.get('is_club_member', False):
+            points = user_profile.get('points', 0)
+            await update.message.reply_text(f"شما عضو باشگاه مشتریان تافته هستید. 🏅\nامتیاز فعلی شما: {points} امتیاز.")
+        else: 
+            await update.message.reply_text("شما هنوز عضو باشگاه مشتریان تافته نیستید. برای عضویت و بهره‌مندی از مزایا، دستور /joinclub را ارسال کنید یا از دکمه منوی اصلی استفاده نمایید.")
+            
+    except Exception as e:
+        logger.error(f"خطا در بررسی وضعیت عضویت باشگاه برای کاربر {user_id_str} با فرمان /clubstatus: {e}", exc_info=True)
+        await update.message.reply_text("متاسفانه مشکلی در بررسی وضعیت عضویت شما پیش آمد.")
+
+
 def get_or_create_user_profile(user_id: str, username: str = None, first_name: str = None) -> dict:
     if not db:
         logger.warning(f"DB: Firestore client (db) is None. Cannot access profile for user {user_id}.")
@@ -440,13 +444,10 @@ def get_or_create_user_profile(user_id: str, username: str = None, first_name: s
 
     if user_doc.exists:
         logger.info(f"DB: پروفایل کاربر {user_id} از Firestore خوانده شد.")
-        # اطمینان از وجود فیلدهای پیش‌فرض باشگاه مشتریان و گیمیفیکیشن
         user_data = user_doc.to_dict()
         if 'is_club_member' not in user_data: user_data['is_club_member'] = False
         if 'points' not in user_data: user_data['points'] = 0
         if 'badges' not in user_data: user_data['badges'] = []
-        # اگر فیلدی نیاز به آپدیت داشت، اینجا می‌توان انجام داد، اما ساده‌تر است که فقط بخوانیم
-        # user_ref.update({'is_club_member': user_data['is_club_member'], 'points': user_data['points'], 'badges': user_data['badges']})
         return user_data
     else:
         logger.info(f"DB: پروفایل جدیدی برای کاربر {user_id} در Firestore ایجاد می‌شود.")
@@ -483,7 +484,6 @@ def get_user_profile_data(user_id: str) -> dict | None:
     user_ref = db.collection('users').document(user_id)
     user_doc = user_ref.get()
     if user_doc.exists:
-        # اطمینان از وجود فیلدهای پیش‌فرض هنگام خواندن
         user_data = user_doc.to_dict()
         if 'is_club_member' not in user_data: user_data['is_club_member'] = False
         if 'points' not in user_data: user_data['points'] = 0
@@ -491,8 +491,6 @@ def get_user_profile_data(user_id: str) -> dict | None:
         return user_data
     return None
 
-
-# --- بخش وب سرور Flask ---
 flask_app = Flask(__name__)
 @flask_app.route('/')
 def health_check():
@@ -508,7 +506,6 @@ def run_flask_app():
     except Exception as e:
         logger.error(f"ترد Flask: خطایی در اجرای وب سرور Flask رخ داد: {e}", exc_info=True)
 
-# --- مدیریت اجرای همزمان Flask و ربات ---
 if __name__ == '__main__':
     logger.info("بلوک اصلی برنامه (__name__ == '__main__') شروع شد.")
     
@@ -528,7 +525,6 @@ if __name__ == '__main__':
     logger.info("در حال ساخت اپلیکیشن ربات تلگرام...")
     telegram_application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # تعریف ConversationHandler (بدون تغییر نسبت به قبل)
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -557,9 +553,8 @@ if __name__ == '__main__':
         name="main_conversation"
     )
 
-    # افزودن کنترل‌کننده‌ها به اپلیکیشن
     telegram_application.add_handler(CommandHandler("joinclub", join_club_command_handler))
-    telegram_application.add_handler(CommandHandler("clubstatus", club_status_command_handler)) # اگر می‌خواهید این فرمان هم باشد
+    telegram_application.add_handler(CommandHandler("clubstatus", club_status_command_handler)) # تابع مربوطه تعریف شده است
     telegram_application.add_handler(conv_handler)
     telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
     
@@ -572,4 +567,4 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"خطایی در حین اجرای run_polling یا در زمان کار ربات رخ داد: {e}", exc_info=True)
     finally:
-        logger.info("برنامه در حال بسته شدن است. ترد Flask نیز به دلیل daemon=True بسته خواهد شد.")
+        logger.info("برنامه در حال بسته شدن است.")
