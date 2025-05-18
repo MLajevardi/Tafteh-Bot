@@ -27,23 +27,21 @@ from telegram.ext import (
 load_dotenv()
 
 # مقداردهی اولیه Firebase Admin SDK در ابتدای برنامه
-db = None 
+db = None
 try:
     cred_path_render = os.getenv("FIREBASE_CREDENTIALS_PATH", "/etc/secrets/firebase-service-account-key.json")
-    cred_path_local = "firebase-service-account-key.json" 
+    cred_path_local = "firebase-service-account-key.json"
     cred_path = cred_path_render if os.path.exists(cred_path_render) else cred_path_local
-    
+
     if not os.path.exists(cred_path):
         # استفاده از logging استاندارد پایتون قبل از basicConfig سفارشی
-        # این پیام ممکن است در Render نمایش داده نشود اگر basicConfig بعدا override کند
-        # اما برای دیباگ اولیه می‌تواند مفید باشد.
         print(f"هشدار: فایل کلید Firebase در مسیر '{cred_path}' یافت نشد.")
         logging.warning(f"فایل کلید Firebase در مسیر '{cred_path}' یافت نشد. ربات بدون اتصال به دیتابیس اجرا خواهد شد.")
     else:
         cred = credentials.Certificate(cred_path)
-        if not firebase_admin._apps: 
+        if not firebase_admin._apps:
             firebase_admin.initialize_app(cred)
-        db = firestore.client() 
+        db = firestore.client()
         logging.info("Firebase Admin SDK با موفقیت مقداردهی اولیه شد و به Firestore متصل است.")
 except Exception as e:
     print(f"خطای بحرانی در مقداردهی اولیه Firebase Admin SDK: {e}")
@@ -56,7 +54,7 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[logging.StreamHandler()] # اطمینان از خروجی به کنسول (stdout/stderr)
 )
-logger = logging.getLogger(__name__) 
+logger = logging.getLogger(__name__)
 
 logger.info("اسکریپت main.py شروع به کار کرد. در حال بررسی متغیرهای محیطی...")
 
@@ -68,12 +66,12 @@ URL_TAFTEH_WEBSITE = "https://tafteh.ir/"
 
 POINTS_FOR_JOINING_CLUB = 50
 POINTS_FOR_PROFILE_COMPLETION = 20 # برای سن و جنسیت
-POINTS_FOR_NAME_COMPLETION = 15 
+POINTS_FOR_NAME_COMPLETION = 15
 POINTS_FOR_CLUB_TIP = 2
 
 BADGE_CLUB_MEMBER = "عضو باشگاه تافته 🏅"
-BADGE_PROFILE_COMPLETE = "پروفایل پایه کامل 🧑‍🔬" 
-BADGE_FULL_PROFILE = "پروفایل طلایی ✨" 
+BADGE_PROFILE_COMPLETE = "پروفایل پایه کامل 🧑‍🔬"
+BADGE_FULL_PROFILE = "پروفایل طلایی ✨"
 BADGE_HEALTH_EXPLORER = "کاشف سلامت 🧭"
 CLUB_TIP_BADGE_THRESHOLD = 3
 
@@ -87,7 +85,8 @@ if not OPENROUTER_API_KEY:
     logger.error("!!! بحرانی: کلید API اوپن‌روتر (OPENROUTER_API_KEY) در متغیرهای محیطی یافت نشد. برنامه خارج می‌شود.")
     exit(1)
 else:
-    logger.info(f"کلید API اوپن‌روتر با موفقیت بارگذاری شد (بخشی از کلید: sk-...{OPENROUTER_API_KEY[-4:]}).")
+    logger.info(f"کلید API اوپن‌روتر با موفقیت بارگذاری شد.")
+
 
 class States(Enum):
     MAIN_MENU = 1
@@ -97,25 +96,25 @@ class States(Enum):
     AWAITING_CLUB_JOIN_CONFIRMATION = 5
     PROFILE_VIEW = 6
     AWAITING_CANCEL_MEMBERSHIP_CONFIRMATION = 7
-    AWAITING_FIRST_NAME = 8 
-    AWAITING_LAST_NAME = 9  
+    AWAITING_FIRST_NAME = 8
+    AWAITING_LAST_NAME = 9
 
 # --- تعریف کیبوردها ---
 DOCTOR_CONVERSATION_KEYBOARD = ReplyKeyboardMarkup(
     [["❓ سوال جدید از دکتر"], ["🔙 بازگشت به منوی اصلی"]], resize_keyboard=True
 )
-AGE_INPUT_KEYBOARD = ReplyKeyboardMarkup( 
+AGE_INPUT_KEYBOARD = ReplyKeyboardMarkup(
     [["🔙 بازگشت به منوی اصلی"]], resize_keyboard=True, one_time_keyboard=True
 )
-GENDER_SELECTION_KEYBOARD = ReplyKeyboardMarkup( 
+GENDER_SELECTION_KEYBOARD = ReplyKeyboardMarkup(
     [["زن"], ["مرد"], ["🔙 بازگشت به منوی اصلی"]], resize_keyboard=True, one_time_keyboard=True
 )
-CLUB_JOIN_CONFIRMATION_KEYBOARD = ReplyKeyboardMarkup( 
+CLUB_JOIN_CONFIRMATION_KEYBOARD = ReplyKeyboardMarkup(
     [["✅ بله، عضو می‌شوم"], ["❌ خیر، فعلاً نه"]], resize_keyboard=True, one_time_keyboard=True
 )
 PROFILE_VIEW_KEYBOARD = ReplyKeyboardMarkup(
     [
-        ["✏️ تکمیل/ویرایش نام"], 
+        ["✏️ تکمیل/ویرایش نام"],
         ["💔 لغو عضویت از باشگاه"],
         ["🔙 بازگشت به منوی اصلی"]
     ],
@@ -137,6 +136,7 @@ HEALTH_TIPS_FOR_CLUB = [
     "برای کاهش استرس، تکنیک‌های آرام‌سازی مانند مدیتیشن یا تنفس عمیق را امتحان کنید."
 ]
 
+# --- توابع کمکی ---
 async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -146,9 +146,9 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
     body = {
         "model": OPENROUTER_MODEL_NAME,
         "messages": messages_payload,
-        "temperature": 0.6, 
+        "temperature": 0.6,
     }
-    logger.info(f"آماده‌سازی درخواست برای OpenRouter با مدل: {OPENROUTER_MODEL_NAME} و {len(chat_history)} پیام در تاریخچه.")
+    logger.info(f"آماده‌سازی درخواست برای OpenRouter. مدل: {OPENROUTER_MODEL_NAME}, تاریخچه: {len(chat_history)} پیام.")
     async with httpx.AsyncClient(timeout=90.0) as client:
         try:
             logger.debug(f"ارسال درخواست به OpenRouter. Body: {body}")
@@ -162,9 +162,9 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
                 logger.info(f"محتوای دقیق پاسخ دریافت شده از LLM: '{llm_response_content}'")
                 return llm_response_content
             else:
-                logger.error(f"ساختار پاسخ دریافت شده از OpenRouter نامعتبر یا فاقد محتوا است: {data}")
+                logger.error(f"ساختار پاسخ دریافت شده از OpenRouter نامعتبر: {data}")
                 return "❌ مشکلی در پردازش پاسخ از سرویس پزشک مجازی رخ داد."
-        except Exception as e: 
+        except Exception as e:
             logger.error(f"خطا در ارتباط یا پردازش پاسخ OpenRouter: {e}", exc_info=True)
             return "❌ بروز خطا در ارتباط با سرویس پزشک مجازی. لطفاً مجدداً تلاش نمایید."
 
@@ -187,14 +187,14 @@ def _prepare_doctor_system_prompt(age: int, gender: str) -> str:
     )
 
 async def notify_points_awarded(bot: Application.bot, chat_id: int, user_id_str: str, points_awarded: int, reason: str):
-    if not db: return 
+    if not db: return
     try:
         user_profile_updated = await asyncio.to_thread(get_user_profile_data, user_id_str)
         total_points = user_profile_updated.get('points', 0) if user_profile_updated else points_awarded
         
         message = f"✨ شما {points_awarded} امتیاز برای '{reason}' دریافت کردید!\n"
         message += f"مجموع امتیاز شما اکنون: {total_points} است. 🌟"
-        await bot.send_message(chat_id=chat_id, text=message) 
+        await bot.send_message(chat_id=chat_id, text=message)
         logger.info(f"به کاربر {user_id_str} برای '{reason}'، {points_awarded} امتیاز اطلاع داده شد. مجموع امتیاز: {total_points}")
     except Exception as e:
         logger.error(f"خطا در اطلاع‌رسانی امتیاز به کاربر {user_id_str}: {e}", exc_info=True)
@@ -243,7 +243,10 @@ def get_or_create_user_profile(user_id: str, username: str = None, first_name: s
              logger.info(f"DB: به‌روزرسانی پروفایل کاربر {user_id} با فیلدهای پیش‌فرض جدید در زمان خواندن.")
              update_payload = {k:v for k,v in default_fields.items() if k not in user_doc.to_dict()}
              if update_payload: 
-                user_ref.update(update_payload)
+                try:
+                    user_ref.update(update_payload)
+                except Exception as e_update:
+                    logger.error(f"DB: خطا در آپدیت فیلدهای پیش فرض برای کاربر {user_id}: {e_update}")
         return user_data
     else:
         logger.info(f"DB: پروفایل جدیدی برای کاربر {user_id} در Firestore ایجاد می‌شود.")
@@ -256,34 +259,47 @@ def get_or_create_user_profile(user_id: str, username: str = None, first_name: s
         }
         for key, default_value in default_fields.items():
             user_data[key] = default_value
-        user_ref.set(user_data)
+        
+        try:
+            user_ref.set(user_data)
+        except Exception as e_set:
+            logger.error(f"DB: خطا در ایجاد پروفایل جدید برای کاربر {user_id}: {e_set}")
+            # برگرداندن داده‌های پیش‌فرض حتی اگر ذخیره در دیتابیس ناموفق بود
         return user_data
 
 def update_user_profile_data(user_id: str, data_to_update: dict) -> None:
     if not db: return
     user_ref = db.collection('users').document(user_id)
     data_to_update['last_updated_date'] = firestore.SERVER_TIMESTAMP
-    user_ref.update(data_to_update) 
-    logger.info(f"DB: پروفایل کاربر {user_id} با داده‌های {data_to_update} در Firestore به‌روز شد.")
+    try:
+        user_ref.update(data_to_update) 
+        logger.info(f"DB: پروفایل کاربر {user_id} با داده‌های {data_to_update} در Firestore به‌روز شد.")
+    except Exception as e:
+        logger.error(f"DB: خطا در به‌روزرسانی پروفایل کاربر {user_id}: {e}", exc_info=True)
+
 
 def get_user_profile_data(user_id: str) -> dict | None:
     if not db: return None
     user_ref = db.collection('users').document(user_id)
-    user_doc = user_ref.get()
-    if user_doc.exists:
-        user_data = user_doc.to_dict()
-        defaults = { 
-            'is_club_member': False, 'points': 0, 'badges': [],
-            'profile_completion_points_awarded': False, 'club_tip_usage_count': 0,
-            'club_join_date': None, 'age': None, 'gender': None,
-            'name_first_db': None, 'name_last_db': None, 'profile_name_completion_points_awarded': False
-        }
-        for key, default_value in defaults.items():
-            if key not in user_data:
-                user_data[key] = default_value
-        return user_data
+    try:
+        user_doc = user_ref.get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            defaults = { 
+                'is_club_member': False, 'points': 0, 'badges': [],
+                'profile_completion_points_awarded': False, 'club_tip_usage_count': 0,
+                'club_join_date': None, 'age': None, 'gender': None,
+                'name_first_db': None, 'name_last_db': None, 'profile_name_completion_points_awarded': False
+            }
+            for key, default_value in defaults.items():
+                if key not in user_data:
+                    user_data[key] = default_value
+            return user_data
+    except Exception as e:
+        logger.error(f"DB: خطا در خواندن پروفایل کاربر {user_id}: {e}", exc_info=True)
     return None
 
+# --- کنترل‌کننده‌های اصلی ---
 async def get_dynamic_main_menu_keyboard(context: ContextTypes.DEFAULT_TYPE, user_id_str: str) -> ReplyKeyboardMarkup:
     is_member = False
     if 'is_club_member_cached' in context.user_data:
@@ -320,7 +336,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     keys_to_clear_from_session = [
         "doctor_chat_history", "system_prompt_for_doctor", 
         "age_temp", "is_club_member_cached", 
-        "awaiting_field_to_edit" 
+        "awaiting_field_to_edit", "temp_first_name"
     ]
     for key in keys_to_clear_from_session:
         if key in context.user_data:
@@ -338,13 +354,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
         welcome_message_text = message_prefix + "به منوی اصلی بازگشتید."
     
     effective_chat_id = update.effective_chat.id
-    if update.message and update.message.photo : 
-         await context.bot.send_message(chat_id=effective_chat_id, text=welcome_message_text, reply_markup=dynamic_main_menu)
-    elif update.message:
-        await update.message.reply_text(welcome_message_text, reply_markup=dynamic_main_menu)
-    else: 
-         await context.bot.send_message(chat_id=effective_chat_id, text=welcome_message_text, reply_markup=dynamic_main_menu)
+    try:
+        # ارسال عکس فقط اگر update.message وجود دارد و خودش عکس نیست (برای جلوگیری از ارور در /cancel)
+        if update.message and not update.message.photo : 
+            await context.bot.send_photo(
+                chat_id=effective_chat_id, photo=WELCOME_IMAGE_URL,
+                caption=welcome_message_text, reply_markup=dynamic_main_menu
+            )
+        else: # اگر عکس بود یا update.message نبود (مثلا /cancel) فقط متن بفرست
+            await context.bot.send_message(chat_id=effective_chat_id, text=welcome_message_text, reply_markup=dynamic_main_menu)
+    except Exception as e:
+        logger.error(f"خطا در ارسال پیام خوش‌آمدگویی برای {user_id_str}: {e}", exc_info=True)
+        # فال‌بک به پیام متنی ساده اگر ارسال عکس ناموفق بود
+        await context.bot.send_message(chat_id=effective_chat_id, text=welcome_message_text, reply_markup=dynamic_main_menu)
+
     return States.MAIN_MENU
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States: # تابع cancel تعریف شده
+    user = update.effective_user
+    logger.info(f"User {user.id if user else 'Unknown'} called /cancel. Delegating to start handler.")
+    context.user_data['_is_cancel_flow'] = True 
+    # ارسال پیام اولیه لغو بدون کیبورد، چون start منوی اصلی را خواهد فرستاد
+    # و اگر update.message نباشد، reply_text خطا می‌دهد.
+    if update.effective_chat:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="درخواست شما لغو شد. بازگشت به منوی اصلی...", reply_markup=ReplyKeyboardRemove())
+    return await start(update, context)
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     text = update.message.text
@@ -493,10 +528,12 @@ async def handle_club_join_confirmation(update: Update, context: ContextTypes.DE
     text = update.message.text
     logger.info(f"کاربر {user_id_str} به سوال عضویت در باشگاه پاسخ داد: '{text}'")
     
+    dynamic_main_menu_to_send = await get_dynamic_main_menu_keyboard(context, user_id_str) 
+
     if text == "✅ بله، عضو می‌شوم":
         if not db:
-            await update.message.reply_text("سیستم باشگاه مشتریان موقتا در دسترس نیست.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
-            return await start(update, context) # بازگشت به منوی اصلی
+            await update.message.reply_text("سیستم باشگاه مشتریان موقتا در دسترس نیست.", reply_markup=dynamic_main_menu_to_send)
+            return await start(update, context)
         try:
             await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
             await asyncio.to_thread(update_user_profile_data, user_id_str, 
@@ -509,18 +546,20 @@ async def handle_club_join_confirmation(update: Update, context: ContextTypes.DE
             await update.message.reply_text(f"عضویت شما در باشگاه مشتریان تافته با موفقیت انجام شد! ✨")
             await notify_points_awarded(update.get_bot(), update.effective_chat.id, user_id_str, POINTS_FOR_JOINING_CLUB, "عضویت در باشگاه مشتریان")
             await award_badge_if_not_already_awarded(update.get_bot(), update.effective_chat.id, user_id_str, BADGE_CLUB_MEMBER)
+            
+            final_main_menu = await get_dynamic_main_menu_keyboard(context, user_id_str) 
+            await update.message.reply_text("از همراهی شما سپاسگزاریم. به منوی اصلی بازگشتید.", reply_markup=final_main_menu)
         except Exception as e:
             logger.error(f"خطا در عضویت باشگاه برای {user_id_str}: {e}", exc_info=True)
-            await update.message.reply_text("مشکلی در عضویت شما پیش آمد.")
+            await update.message.reply_text("مشکلی در عضویت شما پیش آمد.", reply_markup=dynamic_main_menu_to_send)
     elif text == "❌ خیر، فعلاً نه":
-        await update.message.reply_text("متوجه شدم. هر زمان تمایل داشتید، می‌توانید از طریق منوی اصلی اقدام کنید.")
+        await update.message.reply_text("متوجه شدم. هر زمان تمایل داشتید، می‌توانید از طریق منوی اصلی اقدام کنید.", reply_markup=dynamic_main_menu_to_send)
     else: 
         await update.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید.", reply_markup=CLUB_JOIN_CONFIRMATION_KEYBOARD)
         return States.AWAITING_CLUB_JOIN_CONFIRMATION 
-    return await start(update, context) # بازگشت به منوی اصلی با منوی به‌روز شده
+    return await start(update, context)
 
 async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
-    # ... (بدون تغییر) ...
     logger.info(f"--- DCH Entered --- User: {update.effective_user.id}, Text: '{update.message.text}', History items: {len(context.user_data.get('doctor_chat_history', []))}")
     user_question = update.message.text
     user = update.effective_user
@@ -576,26 +615,32 @@ async def my_profile_info_handler(update: Update, context: ContextTypes.DEFAULT_
         user_profile = await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
         points = user_profile.get('points', 0)
         badges = user_profile.get('badges', [])
-        is_member = user_profile.get('is_club_member', False) # باید True باشد تا به اینجا برسد
+        is_member = user_profile.get('is_club_member', False)
         age = user_profile.get('age', 'ثبت نشده')
         gender = user_profile.get('gender', 'ثبت نشده')
         name_first = user_profile.get('name_first_db') or user_profile.get('first_name') or 'ثبت نشده'
         name_last = user_profile.get('name_last_db', 'ثبت نشده')
 
         reply_message = f"👤 **پروفایل شما در باشگاه تافته** 👤\n\n"
-        reply_message += f"نام: {name_first} {name_last}\n"
+        reply_message += f"نام شما: {name_first} {name_last}\n"
         reply_message += f"سن: {age}\n"
-        reply_message += f"جنسیت: {gender}\n"
-        reply_message += " عضویت باشگاه: ✅ فعال\n"
-        reply_message += f" امتیاز شما: {points} 🌟\n"
-        
-        if badges:
-            reply_message += "\nنشان‌های شما:\n"
-            for badge in badges: reply_message += f"  - {badge}\n"
-        else: reply_message += "\nشما هنوز هیچ نشانی دریافت نکرده‌اید.\n"
+        reply_message += f"جنسیت: {gender}\n\n"
+        if is_member:
+            reply_message += " عضویت باشگاه: ✅ فعال\n"
+            reply_message += f" امتیاز شما: {points} 🌟\n"
+            if badges:
+                reply_message += "\nنشان‌های شما:\n"
+                for badge in badges: reply_message += f"  - {badge}\n"
+            else: reply_message += "\nشما هنوز هیچ نشانی دریافت نکرده‌اید.\n"
             
-        await update.message.reply_text(reply_message, parse_mode="Markdown", reply_markup=PROFILE_VIEW_KEYBOARD)
-        return States.PROFILE_VIEW 
+            await update.message.reply_text(reply_message, parse_mode="Markdown", reply_markup=PROFILE_VIEW_KEYBOARD)
+            return States.PROFILE_VIEW 
+        else: 
+            # این حالت نباید اتفاق بیفتد اگر دکمه "پروفایل" فقط برای اعضا نمایش داده شود
+            # اما برای اطمینان، کاربر را به عضویت هدایت می‌کنیم
+            await update.message.reply_text("شما هنوز عضو باشگاه نیستید. برای مشاهده پروفایل و امتیازات، ابتدا از طریق منو عضو شوید.", 
+                                            reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
+            return States.MAIN_MENU
     except Exception as e:
         logger.error(f"خطا در نمایش پروفایل برای {user_id_str}: {e}", exc_info=True)
         await update.message.reply_text("مشکلی در نمایش پروفایل شما پیش آمد.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
@@ -616,7 +661,7 @@ async def profile_view_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return States.AWAITING_CANCEL_MEMBERSHIP_CONFIRMATION
     elif text == "✏️ تکمیل/ویرایش نام":
-        await update.message.reply_text("لطفاً نام کوچک خود را وارد کنید (یا برای انصراف و بازگشت به پروفایل، گزینه زیر را انتخاب کنید):", reply_markup=NAME_INPUT_KEYBOARD)
+        await update.message.reply_text("لطفاً نام کوچک خود را وارد کنید (یا برای انصراف، گزینه زیر را انتخاب کنید):", reply_markup=NAME_INPUT_KEYBOARD)
         return States.AWAITING_FIRST_NAME
     elif text == "🔙 بازگشت به منوی اصلی":
         return await start(update, context)
@@ -646,11 +691,10 @@ async def handle_cancel_membership_confirmation(update: Update, context: Context
             await update.message.reply_text("مشکلی در لغو عضویت شما پیش آمد.")
     elif text == "❌ خیر، منصرف شدم":
         await update.message.reply_text("خوشحالیم که همچنان عضو باشگاه مشتریان تافته باقی می‌مانید!")
-    else: # ورودی نامعتبر
+    else: 
         await update.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید.", reply_markup=CANCEL_MEMBERSHIP_CONFIRMATION_KEYBOARD)
         return States.AWAITING_CANCEL_MEMBERSHIP_CONFIRMATION
-    return await start(update, context) # بازگشت به منوی اصلی با منوی به‌روز شده
-
+    return await start(update, context)
 
 async def awaiting_first_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
@@ -659,7 +703,7 @@ async def awaiting_first_name_handler(update: Update, context: ContextTypes.DEFA
 
     if text == "🔙 انصراف و بازگشت به پروفایل":
         logger.info(f"کاربر {user_id_str} از ورود نام انصراف داد.")
-        return await my_profile_info_handler(update, context)
+        return await my_profile_info_handler(update, context) 
 
     if not text or len(text) < 2 or len(text) > 50: 
         await update.message.reply_text("نام وارد شده معتبر نیست (باید بین ۲ تا ۵۰ حرف باشد). لطفاً نام صحیح خود را وارد کنید یا انصراف دهید.", reply_markup=NAME_INPUT_KEYBOARD)
@@ -688,7 +732,7 @@ async def awaiting_last_name_handler(update: Update, context: ContextTypes.DEFAU
     if not first_name:
         logger.error(f"خطا: نام کوچک موقت برای کاربر {user_id_str} یافت نشد.")
         await update.message.reply_text("مشکلی در پردازش اطلاعات پیش آمد، لطفاً از ابتدا پروفایل را ویرایش کنید.")
-        return await my_profile_info_handler(update, context) # بازگشت به نمایش پروفایل
+        return await my_profile_info_handler(update, context) 
 
     awarded_name_completion_points_and_badge = False
     if db:
@@ -697,9 +741,10 @@ async def awaiting_last_name_handler(update: Update, context: ContextTypes.DEFAU
             update_payload = {"name_first_db": first_name, "name_last_db": last_name_text}
 
             if user_profile_before_update and not user_profile_before_update.get('profile_name_completion_points_awarded', False):
-                update_payload["points"] = firestore.Increment(POINTS_FOR_NAME_COMPLETION)
-                update_payload["profile_name_completion_points_awarded"] = True
-                awarded_name_completion_points_and_badge = True
+                if first_name and last_name_text: # فقط اگر هر دو وارد شده باشند
+                    update_payload["points"] = firestore.Increment(POINTS_FOR_NAME_COMPLETION)
+                    update_payload["profile_name_completion_points_awarded"] = True
+                    awarded_name_completion_points_and_badge = True
             
             await asyncio.to_thread(update_user_profile_data, user_id_str, update_payload)
             logger.info(f"نام ({first_name} {last_name_text}) کاربر {user_id_str} در دیتابیس ذخیره شد.")
@@ -714,11 +759,9 @@ async def awaiting_last_name_handler(update: Update, context: ContextTypes.DEFAU
     else:
         await update.message.reply_text(f"نام شما به '{first_name} {last_name_text}' تنظیم شد (ذخیره‌سازی دیتابیس غیرفعال است).")
         
-    return await my_profile_info_handler(update, context) # بازگشت به نمایش پروفایل با اطلاعات به‌روز شده
-
+    return await my_profile_info_handler(update, context) 
 
 async def health_tip_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States: 
-    # ... (بدون تغییر نسبت به نسخه کامل قبلی، فقط reply_markup را پویا می‌کنیم) ...
     user = update.effective_user
     user_id_str = str(user.id)
     logger.info(f"کاربر {user_id_str} درخواست نکته سلامتی باشگاه کرد.")
@@ -753,7 +796,6 @@ async def health_tip_command_handler(update: Update, context: ContextTypes.DEFAU
     return States.MAIN_MENU
 
 # --- Flask App & Main Execution ---
-# ... (Flask app و run_flask_app بدون تغییر) ...
 flask_app = Flask(__name__)
 @flask_app.route('/')
 def health_check():
@@ -767,7 +809,6 @@ def run_flask_app():
         flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
         logger.error(f"ترد Flask: خطایی در اجرای وب سرور Flask رخ داد: {e}", exc_info=True)
-
 
 if __name__ == '__main__':
     logger.info("بلوک اصلی برنامه (__name__ == '__main__') شروع شد.")
@@ -830,7 +871,7 @@ if __name__ == '__main__':
             ],
         },
         fallbacks=[
-            CommandHandler("cancel", cancel), 
+            CommandHandler("cancel", cancel), # تابع cancel تعریف شده است
             CommandHandler("start", start), 
             MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start), 
         ],
@@ -839,6 +880,7 @@ if __name__ == '__main__':
     
     telegram_application.add_handler(CommandHandler("myprofile", my_profile_info_handler)) 
     telegram_application.add_handler(CommandHandler("clubtip", health_tip_command_handler)) 
+    # CommandHandler برای /joinclub و /clubstatus حذف شدند چون از طریق منو مدیریت می‌شوند
     telegram_application.add_handler(conv_handler)
     telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
     
