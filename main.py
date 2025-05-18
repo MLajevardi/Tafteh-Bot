@@ -23,43 +23,48 @@ from telegram.ext import (
     Application
 )
 
-# بارگذاری متغیرهای محیطی از فایل .env (برای اجرای محلی مفید است)
+# ۱. بارگذاری متغیرهای محیطی در ابتدای همه چیز
 load_dotenv()
 
-# مقداردهی اولیه Firebase Admin SDK در ابتدای برنامه
+# ۲. مقداردهی اولیه Firebase Admin SDK با لاگ‌گیری پایه خودش
 db = None
 try:
-    # ابتدا لاگ‌گیری پایه را برای این بخش تنظیم می‌کنیم
-    # این basicConfig اولیه است، basicConfig بعدی آن را override خواهد کرد اگر logger اصلی برنامه باشد.
-    logging.basicConfig(format="%(asctime)s - FIRMWARE_INIT - %(levelname)s - %(message)s", level=logging.INFO)
-    
+    # استفاده از یک لاگر موقت برای این بخش حساس اولیه
+    _initial_logger = logging.getLogger("FIRMAWARE_INIT_LOGGER")
+    _initial_logger.setLevel(logging.INFO)
+    _initial_handler = logging.StreamHandler()
+    _initial_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    _initial_handler.setFormatter(_initial_formatter)
+    if not _initial_logger.hasHandlers(): # جلوگیری از افزودن چندباره handler
+        _initial_logger.addHandler(_initial_handler)
+
     cred_path_render = os.getenv("FIREBASE_CREDENTIALS_PATH", "/etc/secrets/firebase-service-account-key.json")
     cred_path_local = "firebase-service-account-key.json"
     cred_path = cred_path_render if os.path.exists(cred_path_render) else cred_path_local
 
     if not os.path.exists(cred_path):
-        logging.warning(f"فایل کلید Firebase در مسیر '{cred_path}' یافت نشد. ربات بدون اتصال به دیتابیس اجرا خواهد شد.")
+        _initial_logger.warning(f"فایل کلید Firebase در مسیر '{cred_path}' یافت نشد. ربات بدون اتصال به دیتابیس اجرا خواهد شد.")
     else:
         cred = credentials.Certificate(cred_path)
-        if not firebase_admin._apps: # جلوگیری از مقداردهی اولیه مجدد اگر قبلا انجام شده
+        if not firebase_admin._apps:
             firebase_admin.initialize_app(cred)
         db = firestore.client()
-        logging.info("Firebase Admin SDK با موفقیت مقداردهی اولیه شد و به Firestore متصل است.")
+        _initial_logger.info("Firebase Admin SDK با موفقیت مقداردهی اولیه شد و به Firestore متصل است.")
 except Exception as e:
-    logging.error(f"خطای بحرانی در مقداردهی اولیه Firebase Admin SDK: {e}", exc_info=True)
+    _initial_logger.error(f"خطای بحرانی در مقداردهی اولیه Firebase Admin SDK: {e}", exc_info=True)
 
 
-# تنظیمات لاگ‌گیری اصلی برنامه
-# این basicConfig ممکن است تنظیمات قبلی را override کند اگر root logger باشد.
-# برای اطمینان، می‌توانیم از getLogger و افزودن handler استفاده کنیم، اما فعلا basicConfig را نگه می‌داریم.
+# ۳. تنظیمات لاگ‌گیری اصلی برنامه
+# این basicConfig ممکن است تنظیمات قبلی (اگر برای root logger بود) را override کند.
+# برای جلوگیری از تداخل، بهتر است logger اصلی را به صورت جداگانه تنظیم کنیم.
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
-    handlers=[logging.StreamHandler()]
+    handlers=[logging.StreamHandler()] # اطمینان از خروجی به کنسول
 )
 logger = logging.getLogger(__name__) # لاگر اصلی برنامه با نام ماژول فعلی
 
-logger.info("اسکریپت main.py شروع به کار کرد. در حال بررسی متغیرهای محیطی...")
+logger.info("اسکریپت main.py شروع به کار کرد (پس از تنظیم لاگر اصلی). در حال بررسی متغیرهای محیطی...")
 
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -68,7 +73,7 @@ WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "https://tafteh.ir/wp-content
 URL_TAFTEH_WEBSITE = "https://tafteh.ir/"
 
 POINTS_FOR_JOINING_CLUB = 50
-POINTS_FOR_PROFILE_COMPLETION = 20 # برای سن و جنسیت
+POINTS_FOR_PROFILE_COMPLETION = 20
 POINTS_FOR_NAME_COMPLETION = 15
 POINTS_FOR_CLUB_TIP = 2
 
@@ -301,17 +306,16 @@ async def award_badge_if_not_already_awarded(bot: Application.bot, chat_id: int,
 
 async def get_dynamic_main_menu_keyboard(context: ContextTypes.DEFAULT_TYPE, user_id_str: str) -> ReplyKeyboardMarkup:
     is_member = False
-    if 'is_club_member_cached' in context.user_data:
+    if 'is_club_member_cached' in context.user_data: # ابتدا از کش user_data بخوان
         is_member = context.user_data['is_club_member_cached']
-    elif db:
+    elif db: # اگر در کش نبود و دیتابیس متصل بود، از دیتابیس بخوان
         try:
             user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
             is_member = user_profile.get('is_club_member', False) if user_profile else False
-            context.user_data['is_club_member_cached'] = is_member
+            context.user_data['is_club_member_cached'] = is_member # نتیجه را در کش ذخیره کن
         except Exception as e:
             logger.error(f"خطا در خواندن وضعیت عضویت کاربر {user_id_str} (get_dynamic_main_menu): {e}")
-    else:
-        context.user_data['is_club_member_cached'] = False
+    # اگر دیتابیس هم در دسترس نبود یا خطایی رخ داد، is_member همان False اولیه باقی می‌ماند
 
     if is_member:
         keyboard_layout = [
@@ -337,7 +341,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
 
     keys_to_clear_from_session = [
         "doctor_chat_history", "system_prompt_for_doctor",
-        "age_temp", "is_club_member_cached",
+        "age_temp", "is_club_member_cached", # کش وضعیت عضویت هم پاک شود تا از دیتابیس بازخوانی شود
         "awaiting_field_to_edit", "temp_first_name"
     ]
     for key in keys_to_clear_from_session:
@@ -347,6 +351,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
 
     if db:
         try:
+            # اطمینان از وجود پروفایل کاربر در دیتابیس هنگام شروع یا بازگشت به منو
             await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
         except Exception as e:
             logger.error(f"خطا در get_or_create_user_profile (start) برای کاربر {user_id_str}: {e}", exc_info=True)
@@ -360,7 +365,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     try:
         # ارسال عکس فقط اگر update.message وجود دارد و خودش عکس نیست (برای جلوگیری از ارور در /cancel)
         # و اگر دستور /start مستقیم زده شده باشد
-        if update.message and update.message.text == "/start" and not update.message.photo :
+        if update.message and update.message.text == "/start" and (not hasattr(update.message, 'photo') or not update.message.photo) :
             await context.bot.send_photo(
                 chat_id=effective_chat_id, photo=WELCOME_IMAGE_URL,
                 caption=welcome_message_text, reply_markup=dynamic_main_menu
@@ -378,7 +383,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user_id = user.id if user else "Unknown"
     logger.info(f"User {user_id} called /cancel. Delegating to start handler.")
     context.user_data['_is_cancel_flow'] = True
-    if update.effective_chat:
+    if update.effective_chat: # اطمینان از وجود چت برای ارسال پیام
         await context.bot.send_message(chat_id=update.effective_chat.id, text="درخواست شما لغو شد. بازگشت به منوی اصلی...", reply_markup=ReplyKeyboardRemove())
     return await start(update, context)
 
@@ -387,7 +392,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user = update.effective_user
     user_id_str = str(user.id)
     logger.info(f"کاربر {user_id_str} در منوی اصلی گزینه '{text}' را انتخاب کرد.")
-    dynamic_main_menu = await get_dynamic_main_menu_keyboard(context, user_id_str)
+    dynamic_main_menu = await get_dynamic_main_menu_keyboard(context, user_id_str) # منوی به‌روز شده
 
     if text == "👨‍⚕️ دکتر تافته":
         age, gender = None, None
@@ -429,17 +434,17 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         age, gender = None, None
         if db:
             user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
-            if user_profile:
+            if user_profile: # باید پروفایل وجود داشته باشد چون get_or_create در start فراخوانی شده
                 age = user_profile.get("age")
                 gender = user_profile.get("gender")
-        if not (age and gender):
+        if not (age and gender): # اگر سن یا جنسیت هنوز در دیتابیس ثبت نشده
             await update.message.reply_text(
                 "برای عضویت در باشگاه، ابتدا باید پروفایل خود را با وارد کردن سن و جنسیت تکمیل کنید.\n"
                 "می‌توانید این کار را با انتخاب گزینه '👨‍⚕️ دکتر تافته' از منوی اصلی انجام دهید و پس از آن مجدداً برای عضویت تلاش نمایید.",
                 reply_markup=dynamic_main_menu
             )
             return States.MAIN_MENU
-        else:
+        else: # سن و جنسیت موجود است، پس سوال برای تایید عضویت
             await update.message.reply_text(
                 "عضویت در باشگاه مشتریان تافته مزایای ویژه‌ای برای شما خواهد داشت! آیا مایل به عضویت هستید؟",
                 reply_markup=CLUB_JOIN_CONFIRMATION_KEYBOARD
@@ -452,7 +457,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.info(f"کاربر {user_id_str} گزینه 'نکته سلامتی باشگاه' را انتخاب کرد.")
         return await health_tip_command_handler(update, context)
     else:
-        await update.message.reply_text("گزینه انتخاب شده معتبر نیست.", reply_markup=dynamic_main_menu)
+        await update.message.reply_text("گزینه انتخاب شده معتبر نیست. لطفاً از منوی زیر انتخاب کنید:", reply_markup=dynamic_main_menu)
         return States.MAIN_MENU
 
 async def request_age_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
@@ -491,6 +496,7 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
         try:
             user_profile_before_update = await asyncio.to_thread(get_user_profile_data, user_id_str)
             update_payload = {"age": age, "gender": gender}
+            # اگر پروفایل از قبل ناقص بوده و حالا با این اطلاعات کامل می‌شود
             if user_profile_before_update and not user_profile_before_update.get('profile_completion_points_awarded', False):
                 if (user_profile_before_update.get("age") is None or user_profile_before_update.get("gender") is None) and age and gender:
                     update_payload["points"] = firestore.Increment(POINTS_FOR_PROFILE_COMPLETION)
@@ -502,7 +508,7 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
                 logger.info(f"کاربر {user_id_str} واجد شرایط دریافت امتیاز و نشان تکمیل پروفایل پایه است.")
         except Exception as e:
             logger.error(f"خطا در ذخیره سن/جنسیت یا اعطای امتیاز/نشان برای {user_id_str}: {e}", exc_info=True)
-    context.user_data["age"] = age
+    context.user_data["age"] = age # همچنین در user_data برای استفاده فوری در همین جلسه ذخیره می‌کنیم
     context.user_data["gender"] = gender
     system_prompt = _prepare_doctor_system_prompt(age, gender)
     context.user_data["system_prompt_for_doctor"] = system_prompt
@@ -527,12 +533,13 @@ async def handle_club_join_confirmation(update: Update, context: ContextTypes.DE
             await update.message.reply_text("سیستم باشگاه مشتریان موقتا در دسترس نیست.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
             return await start(update, context)
         try:
+            # اطمینان از وجود پروفایل قبل از آپدیت
             await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
             await asyncio.to_thread(update_user_profile_data, user_id_str,
                                     {"is_club_member": True,
                                      "points": firestore.Increment(POINTS_FOR_JOINING_CLUB),
                                      "club_join_date": firestore.SERVER_TIMESTAMP})
-            context.user_data['is_club_member_cached'] = True
+            context.user_data['is_club_member_cached'] = True # آپدیت کش
             logger.info(f"کاربر {user_id_str} به باشگاه پیوست و {POINTS_FOR_JOINING_CLUB} امتیاز گرفت.")
 
             await update.message.reply_text(f"عضویت شما در باشگاه مشتریان تافته با موفقیت انجام شد! ✨")
@@ -546,7 +553,7 @@ async def handle_club_join_confirmation(update: Update, context: ContextTypes.DE
     else:
         await update.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید.", reply_markup=CLUB_JOIN_CONFIRMATION_KEYBOARD)
         return States.AWAITING_CLUB_JOIN_CONFIRMATION
-    return await start(update, context)
+    return await start(update, context) # بازگشت به منوی اصلی با منوی به‌روز شده
 
 async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     logger.info(f"--- DCH Entered --- User: {update.effective_user.id}, Text: '{update.message.text}', History items: {len(context.user_data.get('doctor_chat_history', []))}")
@@ -565,17 +572,16 @@ async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFA
                     age_db = profile_db.get("age")
                     gender_db = profile_db.get("gender")
             except Exception as e: logger.error(f"DCH: Error fetching profile for {user_id_str} to rebuild prompt: {e}")
-        if age_db and gender_db:
+        if age_db and gender_db: # فقط اگر سن و جنسیت از دیتابیس خوانده شد
             system_prompt = _prepare_doctor_system_prompt(age_db, gender_db)
             context.user_data["system_prompt_for_doctor"] = system_prompt
-            context.user_data["age"], context.user_data["gender"] = age_db, gender_db
-            logger.info(f"DCH: System prompt for user {user_id_str} rebuilt.")
-        else:
-            logger.error(f"DCH: Could not rebuild system prompt for {user_id_str}. Returning to main.")
-            await update.message.reply_text("مشکلی در بازیابی اطلاعات شما پیش آمده.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
-            if "doctor_chat_history" in context.user_data: del context.user_data["doctor_chat_history"]
-            if "system_prompt_for_doctor" in context.user_data: del context.user_data["system_prompt_for_doctor"]
-            return await start(update, context)
+            context.user_data["age"] = age_db # آپدیت user_data برای سازگاری
+            context.user_data["gender"] = gender_db
+            logger.info(f"DCH: System prompt for user {user_id_str} rebuilt from DB data.")
+        else: # اگر سن و جنسیت در دیتابیس نبود، کاربر را به مرحله ورود اطلاعات هدایت کن
+            logger.error(f"DCH: Could not rebuild system prompt for {user_id_str} as Age/Gender are missing from DB. Redirecting to AWAITING_AGE.")
+            await update.message.reply_text("برای ادامه، لطفاً ابتدا سن خود را وارد کنید:", reply_markup=AGE_INPUT_KEYBOARD)
+            return States.AWAITING_AGE # هدایت به مرحله ورود سن
     if user_question == "🔙 بازگشت به منوی اصلی":
         return await start(update, context)
     elif user_question == "❓ سوال جدید از دکتر":
@@ -625,8 +631,10 @@ async def my_profile_info_handler(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text(reply_message, parse_mode="Markdown", reply_markup=PROFILE_VIEW_KEYBOARD)
             return States.PROFILE_VIEW
         else:
-            await update.message.reply_text("شما هنوز عضو باشگاه نیستید. برای مشاهده پروفایل و امتیازات، ابتدا از طریق منو عضو شوید.",
-                                            reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
+            # اگر کاربر از طریق /myprofile آمده و عضو نیست
+            reply_message = "شما هنوز عضو باشگاه مشتریان تافته نیستید.\n"
+            reply_message += "برای استفاده از امکانات پروفایل و باشگاه، لطفاً ابتدا از طریق منوی اصلی در باشگاه عضو شوید."
+            await update.message.reply_text(reply_message, reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
             return States.MAIN_MENU
     except Exception as e:
         logger.error(f"خطا در نمایش پروفایل برای {user_id_str}: {e}", exc_info=True)
@@ -669,7 +677,7 @@ async def handle_cancel_membership_confirmation(update: Update, context: Context
         try:
             await asyncio.to_thread(update_user_profile_data, user_id_str,
                                     {"is_club_member": False, "points": 0, "badges": [],
-                                     "club_join_date": None, "club_tip_usage_count": 0 }) # همچنین موارد مربوط به پروفایل نام را نیز می‌توان ریست کرد
+                                     "club_join_date": None, "club_tip_usage_count": 0 })
             context.user_data['is_club_member_cached'] = False
             logger.info(f"عضویت کاربر {user_id_str} لغو شد و امتیازات/نشان‌هایش پاک گردید.")
             await update.message.reply_text("عضویت شما از باشگاه مشتریان با موفقیت لغو شد. امتیازات و نشان‌های شما نیز حذف گردید.")
@@ -683,7 +691,7 @@ async def handle_cancel_membership_confirmation(update: Update, context: Context
     else:
         await update.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید.", reply_markup=CANCEL_MEMBERSHIP_CONFIRMATION_KEYBOARD)
         return States.AWAITING_CANCEL_MEMBERSHIP_CONFIRMATION
-    return await start(update, context) # در صورت لغو موفق یا خطا، به منوی اصلی برمی‌گردد
+    return await start(update, context)
 
 async def awaiting_first_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
@@ -784,6 +792,24 @@ async def health_tip_command_handler(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text("مشکلی در ارائه نکته سلامتی پیش آمد.", reply_markup=dynamic_main_menu)
     return States.MAIN_MENU
 
+# --- تعریف تابع fallback_message که قبلا باعث NameError شده بود ---
+async def fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    user_id_str = str(user.id) if user else "UnknownUser"
+    logger.warning(f"--- GLOBAL FALLBACK Reached --- User: {user_id_str}, Text: '{update.message.text if update.message else 'No message text'}', Current user_data: {context.user_data}")
+    
+    dynamic_main_menu = await get_dynamic_main_menu_keyboard(context, user_id_str)
+    
+    if update.effective_chat:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="متوجه نشدم چه گفتید. لطفاً از گزینه‌های منو استفاده کنید یا اگر در مرحله خاصی هستید، ورودی مورد انتظار را ارسال نمایید.",
+            reply_markup=dynamic_main_menu
+        )
+    else:
+        logger.error(f"Fallback_message: effective_chat is None for user {user_id_str}, cannot send reply.")
+
+
 # --- Flask App & Main Execution ---
 flask_app = Flask(__name__)
 @flask_app.route('/')
@@ -860,7 +886,7 @@ if __name__ == '__main__':
             ],
         },
         fallbacks=[
-            CommandHandler("cancel", cancel), 
+            CommandHandler("cancel", cancel), # تابع cancel تعریف شده است
             CommandHandler("start", start),
             MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start),
         ],
@@ -870,7 +896,7 @@ if __name__ == '__main__':
     telegram_application.add_handler(CommandHandler("myprofile", my_profile_info_handler))
     telegram_application.add_handler(CommandHandler("clubtip", health_tip_command_handler))
     telegram_application.add_handler(conv_handler)
-    telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
+    telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message)) # fallback_message تعریف شده است
 
     logger.info("ربات تلگرام در حال شروع polling...")
     try:
