@@ -29,26 +29,27 @@ load_dotenv()
 # مقداردهی اولیه Firebase Admin SDK در ابتدای برنامه
 db = None
 try:
+    # ابتدا لاگ‌گیری پایه را برای این بخش تنظیم می‌کنیم
+    logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+    
     cred_path_render = os.getenv("FIREBASE_CREDENTIALS_PATH", "/etc/secrets/firebase-service-account-key.json")
     cred_path_local = "firebase-service-account-key.json"
     cred_path = cred_path_render if os.path.exists(cred_path_render) else cred_path_local
 
     if not os.path.exists(cred_path):
-        print(f"هشدار LOGGING-PRE-CONFIG: فایل کلید Firebase در مسیر '{cred_path}' یافت نشد.")
         logging.warning(f"فایل کلید Firebase در مسیر '{cred_path}' یافت نشد. ربات بدون اتصال به دیتابیس اجرا خواهد شد.")
     else:
         cred = credentials.Certificate(cred_path)
         if not firebase_admin._apps:
             firebase_admin.initialize_app(cred)
         db = firestore.client()
-        # این لاگ ممکن است قبل از basicConfig اصلی بیاید، بنابراین از logging استاندارد استفاده می‌کنیم
         logging.info("Firebase Admin SDK با موفقیت مقداردهی اولیه شد و به Firestore متصل است.")
 except Exception as e:
-    print(f"خطای بحرانی LOGGING-PRE-CONFIG در مقداردهی اولیه Firebase Admin SDK: {e}")
+    # اگر basicConfig هنوز توسط لاگر اصلی برنامه override نشده، این لاگ ممکن است با فرمت پایه چاپ شود
     logging.error(f"خطای بحرانی در مقداردهی اولیه Firebase Admin SDK: {e}", exc_info=True)
 
 
-# تنظیمات لاگ‌گیری اصلی برنامه
+# تنظیمات لاگ‌گیری اصلی برنامه (این ممکن است تنظیمات قبلی basicConfig را override کند)
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -136,7 +137,90 @@ HEALTH_TIPS_FOR_CLUB = [
     "برای کاهش استرس، تکنیک‌های آرام‌سازی مانند مدیتیشن یا تنفس عمیق را امتحان کنید."
 ]
 
-# --- توابع کمکی ---
+# --- توابع کمکی دیتابیس ---
+def get_or_create_user_profile(user_id: str, username: str = None, first_name: str = None) -> dict:
+    if not db:
+        logger.warning(f"DB: Firestore client (db) is None. Profile for user {user_id} will be in-memory mock.")
+        return {"user_id": user_id, "username": username, "first_name": first_name,
+                "age": None, "gender": None, "is_club_member": False, "points": 0, "badges": [],
+                "profile_completion_points_awarded": False, "club_tip_usage_count": 0, "club_join_date": None,
+                "name_first_db": None, "name_last_db": None, "profile_name_completion_points_awarded": False}
+
+    user_ref = db.collection('users').document(user_id)
+    user_doc = user_ref.get()
+
+    default_fields = {
+        'age': None, 'gender': None, 'is_club_member': False, 'points': 0, 'badges': [],
+        'profile_completion_points_awarded': False, 'club_tip_usage_count': 0,
+        'club_join_date': None, 'name_first_db': None, 'name_last_db': None,
+        'profile_name_completion_points_awarded': False
+    }
+
+    if user_doc.exists:
+        user_data = user_doc.to_dict()
+        needs_update_in_db = False
+        for key, default_value in default_fields.items():
+            if key not in user_data:
+                user_data[key] = default_value
+                needs_update_in_db = True
+        if needs_update_in_db:
+             logger.info(f"DB: به‌روزرسانی پروفایل کاربر {user_id} با فیلدهای پیش‌فرض جدید در زمان خواندن.")
+             update_payload = {k:v for k,v in default_fields.items() if k not in user_doc.to_dict()}
+             if update_payload:
+                try:
+                    user_ref.update(update_payload)
+                except Exception as e_update:
+                    logger.error(f"DB: خطا در آپدیت فیلدهای پیش فرض برای کاربر {user_id} هنگام خواندن: {e_update}")
+        return user_data
+    else:
+        logger.info(f"DB: پروفایل جدیدی برای کاربر {user_id} در Firestore ایجاد می‌شود.")
+        user_data = {
+            'user_id': user_id,
+            'username': username if username else None,
+            'first_name': first_name if first_name else None,
+            'registration_date': firestore.SERVER_TIMESTAMP,
+            'last_interaction_date': firestore.SERVER_TIMESTAMP
+        }
+        for key, default_value in default_fields.items():
+            user_data[key] = default_value
+        try:
+            user_ref.set(user_data)
+        except Exception as e_set:
+            logger.error(f"DB: خطا در ایجاد پروفایل جدید برای کاربر {user_id}: {e_set}")
+        return user_data
+
+def update_user_profile_data(user_id: str, data_to_update: dict) -> None:
+    if not db: return
+    user_ref = db.collection('users').document(user_id)
+    data_to_update['last_updated_date'] = firestore.SERVER_TIMESTAMP
+    try:
+        user_ref.update(data_to_update)
+        logger.info(f"DB: پروفایل کاربر {user_id} با داده‌های {data_to_update} در Firestore به‌روز شد.")
+    except Exception as e:
+        logger.error(f"DB: خطا در به‌روزرسانی پروفایل کاربر {user_id} با داده‌های {data_to_update}: {e}", exc_info=True)
+
+def get_user_profile_data(user_id: str) -> dict | None:
+    if not db: return None
+    user_ref = db.collection('users').document(user_id)
+    try:
+        user_doc = user_ref.get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            defaults = {
+                'is_club_member': False, 'points': 0, 'badges': [],
+                'profile_completion_points_awarded': False, 'club_tip_usage_count': 0,
+                'club_join_date': None, 'age': None, 'gender': None,
+                'name_first_db': None, 'name_last_db': None, 'profile_name_completion_points_awarded': False
+            }
+            for key, default_value in defaults.items():
+                if key not in user_data:
+                    user_data[key] = default_value
+            return user_data
+    except Exception as e:
+        logger.error(f"DB: خطا در خواندن پروفایل کاربر {user_id}: {e}", exc_info=True)
+    return None
+
+# --- توابع کمکی ربات ---
 async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -189,6 +273,8 @@ def _prepare_doctor_system_prompt(age: int, gender: str) -> str:
 async def notify_points_awarded(bot: Application.bot, chat_id: int, user_id_str: str, points_awarded: int, reason: str):
     if not db: return
     try:
+        # ابتدا مطمئن شویم پروفایل کاربر در صورت عدم وجود ایجاد شده
+        await asyncio.to_thread(get_or_create_user_profile, user_id_str) # username و first_name لازم نیست اینجا
         user_profile_updated = await asyncio.to_thread(get_user_profile_data, user_id_str)
         total_points = user_profile_updated.get('points', 0) if user_profile_updated else points_awarded
         
@@ -209,109 +295,23 @@ async def award_badge_if_not_already_awarded(bot: Application.bot, chat_id: int,
                 await asyncio.to_thread(update_user_profile_data, user_id_str, {'badges': firestore.ArrayUnion([badge_name])})
                 await bot.send_message(chat_id=chat_id, text=f"🏆 تبریک! شما نشان '{badge_name}' را دریافت کردید!")
                 logger.info(f"نشان '{badge_name}' به کاربر {user_id_str} اعطا شد.")
-            else:
-                logger.info(f"کاربر {user_id_str} از قبل نشان '{badge_name}' را داشته است.")
+            # else: # نیازی به لاگ کردن نیست اگر از قبل داشته
+            #     logger.info(f"کاربر {user_id_str} از قبل نشان '{badge_name}' را داشته است.")
     except Exception as e:
         logger.error(f"خطا در اعطای نشان '{badge_name}' به کاربر {user_id_str}: {e}", exc_info=True)
 
-def get_or_create_user_profile(user_id: str, username: str = None, first_name: str = None) -> dict:
-    if not db:
-        logger.warning(f"DB: Firestore client (db) is None. Profile for user {user_id} will be in-memory mock.")
-        return {"user_id": user_id, "username": username, "first_name": first_name,
-                "age": None, "gender": None, "is_club_member": False, "points": 0, "badges": [],
-                "profile_completion_points_awarded": False, "club_tip_usage_count": 0, "club_join_date": None,
-                "name_first_db": None, "name_last_db": None, "profile_name_completion_points_awarded": False}
-
-    user_ref = db.collection('users').document(user_id)
-    user_doc = user_ref.get()
-
-    default_fields = {
-        'age': None, 'gender': None, 'is_club_member': False, 'points': 0, 'badges': [],
-        'profile_completion_points_awarded': False, 'club_tip_usage_count': 0,
-        'club_join_date': None, 'name_first_db': None, 'name_last_db': None,
-        'profile_name_completion_points_awarded': False
-    }
-
-    if user_doc.exists:
-        user_data = user_doc.to_dict()
-        needs_update_in_db = False
-        for key, default_value in default_fields.items():
-            if key not in user_data:
-                user_data[key] = default_value
-                needs_update_in_db = True
-        if needs_update_in_db:
-             logger.info(f"DB: به‌روزرسانی پروفایل کاربر {user_id} با فیلدهای پیش‌فرض جدید در زمان خواندن.")
-             update_payload = {k:v for k,v in default_fields.items() if k not in user_doc.to_dict()}
-             if update_payload:
-                try:
-                    user_ref.update(update_payload)
-                except Exception as e_update: # Log specific error for this update
-                    logger.error(f"DB: خطا در آپدیت فیلدهای پیش فرض برای کاربر {user_id} هنگام خواندن: {e_update}")
-        return user_data
-    else:
-        logger.info(f"DB: پروفایل جدیدی برای کاربر {user_id} در Firestore ایجاد می‌شود.")
-        user_data = {
-            'user_id': user_id,
-            'username': username if username else None,
-            'first_name': first_name if first_name else None,
-            'registration_date': firestore.SERVER_TIMESTAMP,
-            'last_interaction_date': firestore.SERVER_TIMESTAMP
-        }
-        for key, default_value in default_fields.items():
-            user_data[key] = default_value
-        try:
-            user_ref.set(user_data)
-        except Exception as e_set: # Log specific error for this set
-            logger.error(f"DB: خطا در ایجاد پروفایل جدید برای کاربر {user_id}: {e_set}")
-        return user_data
-
-def update_user_profile_data(user_id: str, data_to_update: dict) -> None:
-    if not db: return
-    user_ref = db.collection('users').document(user_id)
-    data_to_update['last_updated_date'] = firestore.SERVER_TIMESTAMP
-    try:
-        user_ref.update(data_to_update)
-        logger.info(f"DB: پروفایل کاربر {user_id} با داده‌های {data_to_update} در Firestore به‌روز شد.")
-    except Exception as e:
-        logger.error(f"DB: خطا در به‌روزرسانی پروفایل کاربر {user_id} با داده‌های {data_to_update}: {e}", exc_info=True)
-
-
-def get_user_profile_data(user_id: str) -> dict | None:
-    if not db: return None
-    user_ref = db.collection('users').document(user_id)
-    try:
-        user_doc = user_ref.get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            defaults = {
-                'is_club_member': False, 'points': 0, 'badges': [],
-                'profile_completion_points_awarded': False, 'club_tip_usage_count': 0,
-                'club_join_date': None, 'age': None, 'gender': None,
-                'name_first_db': None, 'name_last_db': None, 'profile_name_completion_points_awarded': False
-            }
-            for key, default_value in defaults.items():
-                if key not in user_data:
-                    user_data[key] = default_value
-            return user_data
-    except Exception as e:
-        logger.error(f"DB: خطا در خواندن پروفایل کاربر {user_id}: {e}", exc_info=True)
-    return None
-
 async def get_dynamic_main_menu_keyboard(context: ContextTypes.DEFAULT_TYPE, user_id_str: str) -> ReplyKeyboardMarkup:
     is_member = False
-    # کش را در ابتدای این تابع پاک می‌کنیم تا همیشه از دیتابیس بخواند (برای اطمینان از نمایش آنی تغییرات عضویت)
     if 'is_club_member_cached' in context.user_data:
-        del context.user_data['is_club_member_cached']
-        
-    if db:
+        is_member = context.user_data['is_club_member_cached']
+    elif db:
         try:
             user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
             is_member = user_profile.get('is_club_member', False) if user_profile else False
-            context.user_data['is_club_member_cached'] = is_member # کش کردن مقدار جدید
-            logger.info(f"وضعیت عضویت کاربر {user_id_str} از دیتابیس خوانده شد: {is_member}")
+            context.user_data['is_club_member_cached'] = is_member
         except Exception as e:
             logger.error(f"خطا در خواندن وضعیت عضویت کاربر {user_id_str} (get_dynamic_main_menu): {e}")
-    else: # اگر دیتابیس در دسترس نیست، فرض کن عضو نیست
+    else:
         context.user_data['is_club_member_cached'] = False
 
     if is_member:
@@ -327,6 +327,7 @@ async def get_dynamic_main_menu_keyboard(context: ContextTypes.DEFAULT_TYPE, use
         ]
     return ReplyKeyboardMarkup(keyboard_layout, resize_keyboard=True)
 
+# --- کنترل‌کننده‌های اصلی ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
     user_id_str = str(user.id)
@@ -358,21 +359,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
 
     effective_chat_id = update.effective_chat.id
     try:
-        if update.message and not update.message.photo :
+        # ارسال عکس فقط اگر update.message وجود دارد و خودش عکس نیست (برای جلوگیری از ارور در /cancel)
+        # و اگر دستور /start مستقیم زده شده باشد
+        if update.message and update.message.text == "/start" and not update.message.photo :
             await context.bot.send_photo(
                 chat_id=effective_chat_id, photo=WELCOME_IMAGE_URL,
                 caption=welcome_message_text, reply_markup=dynamic_main_menu
             )
-        else:
+        else: # در غیر این صورت (بازگشت به منو، /cancel، یا /start بدون عکس) فقط متن بفرست
             await context.bot.send_message(chat_id=effective_chat_id, text=welcome_message_text, reply_markup=dynamic_main_menu)
     except Exception as e:
         logger.error(f"خطا در ارسال پیام خوش‌آمدگویی برای {user_id_str}: {e}", exc_info=True)
+        # فال‌بک به پیام متنی ساده اگر ارسال عکس ناموفق بود
         await context.bot.send_message(chat_id=effective_chat_id, text=welcome_message_text, reply_markup=dynamic_main_menu)
     return States.MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
-    user_id = user.id if user else "Unknown"
+    user_id = user.id if user else "Unknown" # اضافه کردن بررسی وجود user
     logger.info(f"User {user_id} called /cancel. Delegating to start handler.")
     context.user_data['_is_cancel_flow'] = True
     if update.effective_chat:
@@ -518,7 +522,7 @@ async def handle_club_join_confirmation(update: Update, context: ContextTypes.DE
     user_id_str = str(user.id)
     text = update.message.text
     logger.info(f"کاربر {user_id_str} به سوال عضویت در باشگاه پاسخ داد: '{text}'")
-    
+
     if text == "✅ بله، عضو می‌شوم":
         if not db:
             await update.message.reply_text("سیستم باشگاه مشتریان موقتا در دسترس نیست.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
@@ -531,7 +535,7 @@ async def handle_club_join_confirmation(update: Update, context: ContextTypes.DE
                                      "club_join_date": firestore.SERVER_TIMESTAMP})
             context.user_data['is_club_member_cached'] = True
             logger.info(f"کاربر {user_id_str} به باشگاه پیوست و {POINTS_FOR_JOINING_CLUB} امتیاز گرفت.")
-            
+
             await update.message.reply_text(f"عضویت شما در باشگاه مشتریان تافته با موفقیت انجام شد! ✨")
             await notify_points_awarded(update.get_bot(), update.effective_chat.id, user_id_str, POINTS_FOR_JOINING_CLUB, "عضویت در باشگاه مشتریان")
             await award_badge_if_not_already_awarded(update.get_bot(), update.effective_chat.id, user_id_str, BADGE_CLUB_MEMBER)
@@ -846,11 +850,11 @@ if __name__ == '__main__':
                                lambda update, context: update.message.reply_text("لطفاً با استفاده از دکمه‌ها پاسخ دهید.", reply_markup=CANCEL_MEMBERSHIP_CONFIRMATION_KEYBOARD))
             ],
             States.AWAITING_FIRST_NAME: [
-                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler),
+                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler), # بازگشت به نمایش پروفایل
                 MessageHandler(filters.TEXT & ~filters.COMMAND, awaiting_first_name_handler)
             ],
             States.AWAITING_LAST_NAME: [
-                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler),
+                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler), # بازگشت به نمایش پروفایل
                 MessageHandler(filters.TEXT & ~filters.COMMAND, awaiting_last_name_handler)
             ],
         },
@@ -864,7 +868,6 @@ if __name__ == '__main__':
 
     telegram_application.add_handler(CommandHandler("myprofile", my_profile_info_handler))
     telegram_application.add_handler(CommandHandler("clubtip", health_tip_command_handler))
-    # CommandHandler /joinclub و /clubstatus حذف شدند چون از طریق منو مدیریت می‌شوند
     telegram_application.add_handler(conv_handler)
     telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message)) # fallback_message تعریف شده است
 
