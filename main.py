@@ -34,16 +34,17 @@ try:
     cred_path = cred_path_render if os.path.exists(cred_path_render) else cred_path_local
 
     if not os.path.exists(cred_path):
-        print(f"هشدار: فایل کلید Firebase در مسیر '{cred_path}' یافت نشد. ربات بدون دیتابیس اجرا می‌شود.")
+        print(f"هشدار LOGGING-PRE-CONFIG: فایل کلید Firebase در مسیر '{cred_path}' یافت نشد.")
         logging.warning(f"فایل کلید Firebase در مسیر '{cred_path}' یافت نشد. ربات بدون اتصال به دیتابیس اجرا خواهد شد.")
     else:
         cred = credentials.Certificate(cred_path)
         if not firebase_admin._apps:
             firebase_admin.initialize_app(cred)
         db = firestore.client()
+        # این لاگ ممکن است قبل از basicConfig اصلی بیاید، بنابراین از logging استاندارد استفاده می‌کنیم
         logging.info("Firebase Admin SDK با موفقیت مقداردهی اولیه شد و به Firestore متصل است.")
 except Exception as e:
-    print(f"خطای بحرانی در مقداردهی اولیه Firebase Admin SDK: {e}")
+    print(f"خطای بحرانی LOGGING-PRE-CONFIG در مقداردهی اولیه Firebase Admin SDK: {e}")
     logging.error(f"خطای بحرانی در مقداردهی اولیه Firebase Admin SDK: {e}", exc_info=True)
 
 
@@ -216,7 +217,7 @@ async def award_badge_if_not_already_awarded(bot: Application.bot, chat_id: int,
 def get_or_create_user_profile(user_id: str, username: str = None, first_name: str = None) -> dict:
     if not db:
         logger.warning(f"DB: Firestore client (db) is None. Profile for user {user_id} will be in-memory mock.")
-        return {"user_id": user_id, "username": username, "first_name": first_name, 
+        return {"user_id": user_id, "username": username, "first_name": first_name,
                 "age": None, "gender": None, "is_club_member": False, "points": 0, "badges": [],
                 "profile_completion_points_awarded": False, "club_tip_usage_count": 0, "club_join_date": None,
                 "name_first_db": None, "name_last_db": None, "profile_name_completion_points_awarded": False}
@@ -237,31 +238,30 @@ def get_or_create_user_profile(user_id: str, username: str = None, first_name: s
         for key, default_value in default_fields.items():
             if key not in user_data:
                 user_data[key] = default_value
-                needs_update_in_db = True 
+                needs_update_in_db = True
         if needs_update_in_db:
              logger.info(f"DB: به‌روزرسانی پروفایل کاربر {user_id} با فیلدهای پیش‌فرض جدید در زمان خواندن.")
              update_payload = {k:v for k,v in default_fields.items() if k not in user_doc.to_dict()}
-             if update_payload: 
+             if update_payload:
                 try:
                     user_ref.update(update_payload)
-                except Exception as e_update:
-                    logger.error(f"DB: خطا در آپدیت فیلدهای پیش فرض برای کاربر {user_id}: {e_update}")
+                except Exception as e_update: # Log specific error for this update
+                    logger.error(f"DB: خطا در آپدیت فیلدهای پیش فرض برای کاربر {user_id} هنگام خواندن: {e_update}")
         return user_data
     else:
         logger.info(f"DB: پروفایل جدیدی برای کاربر {user_id} در Firestore ایجاد می‌شود.")
         user_data = {
             'user_id': user_id,
             'username': username if username else None,
-            'first_name': first_name if first_name else None, 
+            'first_name': first_name if first_name else None,
             'registration_date': firestore.SERVER_TIMESTAMP,
             'last_interaction_date': firestore.SERVER_TIMESTAMP
         }
         for key, default_value in default_fields.items():
             user_data[key] = default_value
-        
         try:
             user_ref.set(user_data)
-        except Exception as e_set:
+        except Exception as e_set: # Log specific error for this set
             logger.error(f"DB: خطا در ایجاد پروفایل جدید برای کاربر {user_id}: {e_set}")
         return user_data
 
@@ -270,10 +270,11 @@ def update_user_profile_data(user_id: str, data_to_update: dict) -> None:
     user_ref = db.collection('users').document(user_id)
     data_to_update['last_updated_date'] = firestore.SERVER_TIMESTAMP
     try:
-        user_ref.update(data_to_update) 
+        user_ref.update(data_to_update)
         logger.info(f"DB: پروفایل کاربر {user_id} با داده‌های {data_to_update} در Firestore به‌روز شد.")
     except Exception as e:
-        logger.error(f"DB: خطا در به‌روزرسانی پروفایل کاربر {user_id}: {e}", exc_info=True)
+        logger.error(f"DB: خطا در به‌روزرسانی پروفایل کاربر {user_id} با داده‌های {data_to_update}: {e}", exc_info=True)
+
 
 def get_user_profile_data(user_id: str) -> dict | None:
     if not db: return None
@@ -282,7 +283,7 @@ def get_user_profile_data(user_id: str) -> dict | None:
         user_doc = user_ref.get()
         if user_doc.exists:
             user_data = user_doc.to_dict()
-            defaults = { 
+            defaults = {
                 'is_club_member': False, 'points': 0, 'badges': [],
                 'profile_completion_points_awarded': False, 'club_tip_usage_count': 0,
                 'club_join_date': None, 'age': None, 'gender': None,
@@ -298,20 +299,25 @@ def get_user_profile_data(user_id: str) -> dict | None:
 
 async def get_dynamic_main_menu_keyboard(context: ContextTypes.DEFAULT_TYPE, user_id_str: str) -> ReplyKeyboardMarkup:
     is_member = False
+    # کش را در ابتدای این تابع پاک می‌کنیم تا همیشه از دیتابیس بخواند (برای اطمینان از نمایش آنی تغییرات عضویت)
     if 'is_club_member_cached' in context.user_data:
-        is_member = context.user_data['is_club_member_cached']
-    elif db:
+        del context.user_data['is_club_member_cached']
+        
+    if db:
         try:
             user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
             is_member = user_profile.get('is_club_member', False) if user_profile else False
-            context.user_data['is_club_member_cached'] = is_member
+            context.user_data['is_club_member_cached'] = is_member # کش کردن مقدار جدید
+            logger.info(f"وضعیت عضویت کاربر {user_id_str} از دیتابیس خوانده شد: {is_member}")
         except Exception as e:
             logger.error(f"خطا در خواندن وضعیت عضویت کاربر {user_id_str} (get_dynamic_main_menu): {e}")
-    
+    else: # اگر دیتابیس در دسترس نیست، فرض کن عضو نیست
+        context.user_data['is_club_member_cached'] = False
+
     if is_member:
         keyboard_layout = [
             ["👨‍⚕️ دکتر تافته", "📦 راهنمای محصولات"],
-            ["👤 پروفایل و باشگاه"], 
+            ["👤 پروفایل و باشگاه"],
             ["📣 نکته سلامتی باشگاه"]
         ]
     else:
@@ -323,22 +329,23 @@ async def get_dynamic_main_menu_keyboard(context: ContextTypes.DEFAULT_TYPE, use
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
-    user_id_str = str(user.id) 
+    user_id_str = str(user.id)
     message_prefix = "درخواست لغو شما انجام شد. " if context.user_data.get('_is_cancel_flow', False) else ""
     if context.user_data.get('_is_cancel_flow', False): del context.user_data['_is_cancel_flow']
 
     logger.info(f"کاربر {user_id_str} ({user.full_name or user.username}) /start یا بازگشت/لغو به منوی اصلی.")
-    
+
     keys_to_clear_from_session = [
-        "doctor_chat_history", "system_prompt_for_doctor", 
-        "age_temp", "is_club_member_cached", 
+        "doctor_chat_history", "system_prompt_for_doctor",
+        "age_temp", "is_club_member_cached",
         "awaiting_field_to_edit", "temp_first_name"
     ]
     for key in keys_to_clear_from_session:
         if key in context.user_data:
             del context.user_data[key]
-    
-    if db: 
+    logger.info(f"اطلاعات جلسه (user_data) برای کاربر {user_id_str} پاکسازی شد.")
+
+    if db:
         try:
             await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
         except Exception as e:
@@ -348,15 +355,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     welcome_message_text = f"سلام {user.first_name or 'کاربر'}! 👋\nمن ربات تافته هستم. لطفاً یکی از گزینه‌ها را انتخاب کنید:"
     if message_prefix:
         welcome_message_text = message_prefix + "به منوی اصلی بازگشتید."
-    
+
     effective_chat_id = update.effective_chat.id
     try:
-        if update.message and not update.message.photo : 
+        if update.message and not update.message.photo :
             await context.bot.send_photo(
                 chat_id=effective_chat_id, photo=WELCOME_IMAGE_URL,
                 caption=welcome_message_text, reply_markup=dynamic_main_menu
             )
-        else: 
+        else:
             await context.bot.send_message(chat_id=effective_chat_id, text=welcome_message_text, reply_markup=dynamic_main_menu)
     except Exception as e:
         logger.error(f"خطا در ارسال پیام خوش‌آمدگویی برای {user_id_str}: {e}", exc_info=True)
@@ -365,9 +372,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
-    logger.info(f"User {user.id if user else 'Unknown'} called /cancel. Delegating to start handler.")
-    context.user_data['_is_cancel_flow'] = True 
-    if update.effective_chat: # ارسال پیام فقط اگر چت موجود باشد
+    user_id = user.id if user else "Unknown"
+    logger.info(f"User {user_id} called /cancel. Delegating to start handler.")
+    context.user_data['_is_cancel_flow'] = True
+    if update.effective_chat:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="درخواست شما لغو شد. بازگشت به منوی اصلی...", reply_markup=ReplyKeyboardRemove())
     return await start(update, context)
 
@@ -376,21 +384,20 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user = update.effective_user
     user_id_str = str(user.id)
     logger.info(f"کاربر {user_id_str} در منوی اصلی گزینه '{text}' را انتخاب کرد.")
-    
     dynamic_main_menu = await get_dynamic_main_menu_keyboard(context, user_id_str)
 
     if text == "👨‍⚕️ دکتر تافته":
         age, gender = None, None
-        if db: 
+        if db:
             try:
                 user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
-                if user_profile: 
+                if user_profile:
                     age = user_profile.get("age")
                     gender = user_profile.get("gender")
             except Exception as e:
                 logger.error(f"خطا در خواندن پروفایل کاربر {user_id_str} از دیتابیس: {e}", exc_info=True)
         
-        if age and gender: 
+        if age and gender:
             system_prompt = _prepare_doctor_system_prompt(age, gender)
             context.user_data["system_prompt_for_doctor"] = system_prompt
             context.user_data["doctor_chat_history"] = []
@@ -400,13 +407,12 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 reply_markup=DOCTOR_CONVERSATION_KEYBOARD
             )
             return States.DOCTOR_CONVERSATION
-        else: 
+        else:
             await update.message.reply_text(
                 "برای استفاده از دکتر تافته، ابتدا باید سن و جنسیت خود را وارد کنید. لطفاً سن خود را وارد کنید:",
-                reply_markup=AGE_INPUT_KEYBOARD 
+                reply_markup=AGE_INPUT_KEYBOARD
             )
             return States.AWAITING_AGE
-            
     elif text == "📦 راهنمای محصولات":
         keyboard = [[InlineKeyboardButton("مشاهده وب‌سایت تافته", url=URL_TAFTEH_WEBSITE)]]
         reply_markup_inline = InlineKeyboardMarkup(keyboard)
@@ -414,9 +420,8 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "برای مشاهده محصولات و وب‌سایت تافته، روی دکمه زیر کلیک کنید:",
             reply_markup=reply_markup_inline
         )
-        return States.MAIN_MENU 
-        
-    elif text == "⭐ عضویت در باشگاه تافته": 
+        return States.MAIN_MENU
+    elif text == "⭐ عضویت در باشگاه تافته":
         logger.info(f"کاربر {user_id_str} گزینه 'عضویت در باشگاه تافته' را انتخاب کرد.")
         age, gender = None, None
         if db:
@@ -424,7 +429,6 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             if user_profile:
                 age = user_profile.get("age")
                 gender = user_profile.get("gender")
-        
         if not (age and gender):
             await update.message.reply_text(
                 "برای عضویت در باشگاه، ابتدا باید پروفایل خود را با وارد کردن سن و جنسیت تکمیل کنید.\n"
@@ -438,16 +442,13 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 reply_markup=CLUB_JOIN_CONFIRMATION_KEYBOARD
             )
             return States.AWAITING_CLUB_JOIN_CONFIRMATION
-        
-    elif text == "👤 پروفایل و باشگاه": 
+    elif text == "👤 پروفایل و باشگاه":
         logger.info(f"کاربر {user_id_str} گزینه 'پروفایل و باشگاه' را انتخاب کرد.")
-        return await my_profile_info_handler(update, context) 
-
-    elif text == "📣 نکته سلامتی باشگاه": 
+        return await my_profile_info_handler(update, context)
+    elif text == "📣 نکته سلامتی باشگاه":
         logger.info(f"کاربر {user_id_str} گزینه 'نکته سلامتی باشگاه' را انتخاب کرد.")
         return await health_tip_command_handler(update, context)
-
-    else: 
+    else:
         await update.message.reply_text("گزینه انتخاب شده معتبر نیست.", reply_markup=dynamic_main_menu)
         return States.MAIN_MENU
 
@@ -461,8 +462,8 @@ async def request_age_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id_str = str(user.id)
     if not age_text.isdigit() or not (1 <= int(age_text) <= 120):
         await update.message.reply_text("❗️ لطفاً یک سن معتبر (عدد بین ۱ تا ۱۲۰) وارد کنید یا بازگردید.", reply_markup=AGE_INPUT_KEYBOARD)
-        return States.AWAITING_AGE 
-    context.user_data["age_temp"] = int(age_text) 
+        return States.AWAITING_AGE
+    context.user_data["age_temp"] = int(age_text)
     logger.info(f"کاربر {user_id_str} سن موقت خود را {age_text} وارد کرد.")
     await update.message.reply_text("متشکرم. حالا لطفاً جنسیت خود را انتخاب کنید یا بازگردید:", reply_markup=GENDER_SELECTION_KEYBOARD)
     return States.AWAITING_GENDER
@@ -473,17 +474,17 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
         logger.info(f"User {update.effective_user.id} returned to main menu from AWAITING_GENDER.")
         if "age_temp" in context.user_data: del context.user_data["age_temp"]
         return await start(update, context)
-    gender_input = text.strip() 
+    gender_input = text.strip()
     user = update.effective_user
     user_id_str = str(user.id)
-    age = context.user_data.pop("age_temp", None) 
+    age = context.user_data.pop("age_temp", None)
     if not age:
         logger.error(f"خطا: سن موقت برای کاربر {user_id_str} یافت نشد.")
         await update.message.reply_text("مشکلی در پردازش اطلاعات پیش آمد.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
-        return await start(update, context) 
-    gender = gender_input 
+        return await start(update, context)
+    gender = gender_input
     awarded_profile_points_and_badge = False
-    if db: 
+    if db:
         try:
             user_profile_before_update = await asyncio.to_thread(get_user_profile_data, user_id_str)
             update_payload = {"age": age, "gender": gender}
@@ -498,7 +499,7 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
                 logger.info(f"کاربر {user_id_str} واجد شرایط دریافت امتیاز و نشان تکمیل پروفایل پایه است.")
         except Exception as e:
             logger.error(f"خطا در ذخیره سن/جنسیت یا اعطای امتیاز/نشان برای {user_id_str}: {e}", exc_info=True)
-    context.user_data["age"] = age 
+    context.user_data["age"] = age
     context.user_data["gender"] = gender
     system_prompt = _prepare_doctor_system_prompt(age, gender)
     context.user_data["system_prompt_for_doctor"] = system_prompt
@@ -507,7 +508,7 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
         f"✅ مشخصات شما ثبت شد:\nسن: {age} سال\nجنسیت: {gender}\n\nاکنون می‌توانید سوال پزشکی خود را از دکتر تافته بپرسید.",
         reply_markup=DOCTOR_CONVERSATION_KEYBOARD
     )
-    if awarded_profile_points_and_badge: # اطلاع رسانی پس از پیام اصلی
+    if awarded_profile_points_and_badge:
         await notify_points_awarded(update.get_bot(), update.effective_chat.id, user_id_str, POINTS_FOR_PROFILE_COMPLETION, "تکمیل پروفایل (سن و جنسیت)")
         await award_badge_if_not_already_awarded(update.get_bot(), update.effective_chat.id, user_id_str, BADGE_PROFILE_COMPLETE)
     return States.DOCTOR_CONVERSATION
@@ -524,11 +525,11 @@ async def handle_club_join_confirmation(update: Update, context: ContextTypes.DE
             return await start(update, context)
         try:
             await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
-            await asyncio.to_thread(update_user_profile_data, user_id_str, 
-                                    {"is_club_member": True, 
+            await asyncio.to_thread(update_user_profile_data, user_id_str,
+                                    {"is_club_member": True,
                                      "points": firestore.Increment(POINTS_FOR_JOINING_CLUB),
                                      "club_join_date": firestore.SERVER_TIMESTAMP})
-            context.user_data['is_club_member_cached'] = True 
+            context.user_data['is_club_member_cached'] = True
             logger.info(f"کاربر {user_id_str} به باشگاه پیوست و {POINTS_FOR_JOINING_CLUB} امتیاز گرفت.")
             
             await update.message.reply_text(f"عضویت شما در باشگاه مشتریان تافته با موفقیت انجام شد! ✨")
@@ -539,10 +540,10 @@ async def handle_club_join_confirmation(update: Update, context: ContextTypes.DE
             await update.message.reply_text("مشکلی در عضویت شما پیش آمد.")
     elif text == "❌ خیر، فعلاً نه":
         await update.message.reply_text("متوجه شدم. هر زمان تمایل داشتید، می‌توانید از طریق منوی اصلی اقدام کنید.")
-    else: 
+    else:
         await update.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید.", reply_markup=CLUB_JOIN_CONFIRMATION_KEYBOARD)
-        return States.AWAITING_CLUB_JOIN_CONFIRMATION 
-    return await start(update, context) # بازگشت به منوی اصلی با منوی به‌روز شده
+        return States.AWAITING_CLUB_JOIN_CONFIRMATION
+    return await start(update, context)
 
 async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     logger.info(f"--- DCH Entered --- User: {update.effective_user.id}, Text: '{update.message.text}', History items: {len(context.user_data.get('doctor_chat_history', []))}")
@@ -551,7 +552,7 @@ async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFA
     user_id_str = str(user.id)
     chat_history = context.user_data.get("doctor_chat_history", [])
     system_prompt = context.user_data.get("system_prompt_for_doctor")
-    if not system_prompt: 
+    if not system_prompt:
         logger.warning(f"DCH: System prompt for user {user_id_str} not found! Attempting rebuild.")
         age_db, gender_db = None, None
         if db:
@@ -571,11 +572,11 @@ async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFA
             await update.message.reply_text("مشکلی در بازیابی اطلاعات شما پیش آمده.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
             if "doctor_chat_history" in context.user_data: del context.user_data["doctor_chat_history"]
             if "system_prompt_for_doctor" in context.user_data: del context.user_data["system_prompt_for_doctor"]
-            return await start(update, context) 
+            return await start(update, context)
     if user_question == "🔙 بازگشت به منوی اصلی":
-        return await start(update, context) 
+        return await start(update, context)
     elif user_question == "❓ سوال جدید از دکتر":
-        context.user_data["doctor_chat_history"] = [] 
+        context.user_data["doctor_chat_history"] = []
         await update.message.reply_text("تاریخچه پاک شد. سوال جدید خود را بپرسید:", reply_markup=DOCTOR_CONVERSATION_KEYBOARD)
         return States.DOCTOR_CONVERSATION
     logger.info(f"DCH: Processing text from {user_id_str}: '{user_question}'")
@@ -600,7 +601,7 @@ async def my_profile_info_handler(update: Update, context: ContextTypes.DEFAULT_
         user_profile = await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
         points = user_profile.get('points', 0)
         badges = user_profile.get('badges', [])
-        is_member = user_profile.get('is_club_member', False) 
+        is_member = user_profile.get('is_club_member', False)
         age = user_profile.get('age', 'ثبت نشده')
         gender = user_profile.get('gender', 'ثبت نشده')
         name_first = user_profile.get('name_first_db') or user_profile.get('first_name') or 'ثبت نشده'
@@ -619,9 +620,9 @@ async def my_profile_info_handler(update: Update, context: ContextTypes.DEFAULT_
             else: reply_message += "\nشما هنوز هیچ نشانی دریافت نکرده‌اید.\n"
             
             await update.message.reply_text(reply_message, parse_mode="Markdown", reply_markup=PROFILE_VIEW_KEYBOARD)
-            return States.PROFILE_VIEW 
-        else: 
-            await update.message.reply_text("شما هنوز عضو باشگاه نیستید. برای مشاهده پروفایل و امتیازات، ابتدا از طریق منو عضو شوید.", 
+            return States.PROFILE_VIEW
+        else:
+            await update.message.reply_text("شما هنوز عضو باشگاه نیستید. برای مشاهده پروفایل و امتیازات، ابتدا از طریق منو عضو شوید.",
                                             reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
             return States.MAIN_MENU
     except Exception as e:
@@ -663,10 +664,10 @@ async def handle_cancel_membership_confirmation(update: Update, context: Context
             await update.message.reply_text("سیستم باشگاه موقتا در دسترس نیست.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
             return await start(update, context)
         try:
-            await asyncio.to_thread(update_user_profile_data, user_id_str, 
-                                    {"is_club_member": False, "points": 0, "badges": [], 
+            await asyncio.to_thread(update_user_profile_data, user_id_str,
+                                    {"is_club_member": False, "points": 0, "badges": [],
                                      "club_join_date": None, "club_tip_usage_count": 0 })
-            context.user_data['is_club_member_cached'] = False 
+            context.user_data['is_club_member_cached'] = False
             logger.info(f"عضویت کاربر {user_id_str} لغو شد و امتیازات/نشان‌هایش پاک گردید.")
             await update.message.reply_text("عضویت شما از باشگاه مشتریان با موفقیت لغو شد. امتیازات و نشان‌های شما نیز حذف گردید.")
         except Exception as e:
@@ -674,7 +675,7 @@ async def handle_cancel_membership_confirmation(update: Update, context: Context
             await update.message.reply_text("مشکلی در لغو عضویت شما پیش آمد.")
     elif text == "❌ خیر، منصرف شدم":
         await update.message.reply_text("خوشحالیم که همچنان عضو باشگاه مشتریان تافته باقی می‌مانید!")
-    else: 
+    else:
         await update.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید.", reply_markup=CANCEL_MEMBERSHIP_CONFIRMATION_KEYBOARD)
         return States.AWAITING_CANCEL_MEMBERSHIP_CONFIRMATION
     return await start(update, context)
@@ -686,9 +687,9 @@ async def awaiting_first_name_handler(update: Update, context: ContextTypes.DEFA
 
     if text == "🔙 انصراف و بازگشت به پروفایل":
         logger.info(f"کاربر {user_id_str} از ورود نام انصراف داد.")
-        return await my_profile_info_handler(update, context) 
+        return await my_profile_info_handler(update, context)
 
-    if not text or len(text) < 2 or len(text) > 50: 
+    if not text or len(text) < 2 or len(text) > 50:
         await update.message.reply_text("نام وارد شده معتبر نیست (باید بین ۲ تا ۵۰ حرف باشد). لطفاً نام صحیح خود را وارد کنید یا انصراف دهید.", reply_markup=NAME_INPUT_KEYBOARD)
         return States.AWAITING_FIRST_NAME
     
@@ -707,7 +708,7 @@ async def awaiting_last_name_handler(update: Update, context: ContextTypes.DEFAU
         if 'temp_first_name' in context.user_data: del context.user_data['temp_first_name']
         return await my_profile_info_handler(update, context)
 
-    if not last_name_text or len(last_name_text) < 2 or len(last_name_text) > 50: 
+    if not last_name_text or len(last_name_text) < 2 or len(last_name_text) > 50:
         await update.message.reply_text("نام خانوادگی وارد شده معتبر نیست (باید بین ۲ تا ۵۰ حرف باشد). لطفاً نام خانوادگی صحیح خود را وارد کنید یا انصراف دهید.", reply_markup=NAME_INPUT_KEYBOARD)
         return States.AWAITING_LAST_NAME
 
@@ -715,7 +716,7 @@ async def awaiting_last_name_handler(update: Update, context: ContextTypes.DEFAU
     if not first_name:
         logger.error(f"خطا: نام کوچک موقت برای کاربر {user_id_str} یافت نشد.")
         await update.message.reply_text("مشکلی در پردازش اطلاعات پیش آمد، لطفاً از ابتدا پروفایل را ویرایش کنید.")
-        return await my_profile_info_handler(update, context) 
+        return await my_profile_info_handler(update, context)
 
     awarded_name_completion_points_and_badge = False
     if db:
@@ -724,7 +725,7 @@ async def awaiting_last_name_handler(update: Update, context: ContextTypes.DEFAU
             update_payload = {"name_first_db": first_name, "name_last_db": last_name_text}
 
             if user_profile_before_update and not user_profile_before_update.get('profile_name_completion_points_awarded', False):
-                if first_name and last_name_text: 
+                if first_name and last_name_text:
                     update_payload["points"] = firestore.Increment(POINTS_FOR_NAME_COMPLETION)
                     update_payload["profile_name_completion_points_awarded"] = True
                     awarded_name_completion_points_and_badge = True
@@ -742,9 +743,9 @@ async def awaiting_last_name_handler(update: Update, context: ContextTypes.DEFAU
     else:
         await update.message.reply_text(f"نام شما به '{first_name} {last_name_text}' تنظیم شد (ذخیره‌سازی دیتابیس غیرفعال است).")
         
-    return await my_profile_info_handler(update, context) 
+    return await my_profile_info_handler(update, context)
 
-async def health_tip_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States: 
+async def health_tip_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
     user_id_str = str(user.id)
     logger.info(f"کاربر {user_id_str} درخواست نکته سلامتی باشگاه کرد.")
@@ -758,14 +759,14 @@ async def health_tip_command_handler(update: Update, context: ContextTypes.DEFAU
         user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
         
         if user_profile and user_profile.get('is_club_member', False):
-            tip = random.choice(HEALTH_TIPS_FOR_CLUB) 
+            tip = random.choice(HEALTH_TIPS_FOR_CLUB)
             new_tip_usage_count = user_profile.get('club_tip_usage_count', 0) + 1
             update_payload = {"points": firestore.Increment(POINTS_FOR_CLUB_TIP), "club_tip_usage_count": new_tip_usage_count}
             
             await asyncio.to_thread(update_user_profile_data, user_id_str, update_payload)
             
             message_to_send = f"⚕️ **نکته سلامتی ویژه اعضای باشگاه تافته:**\n\n_{tip}_"
-            await update.message.reply_text(message_to_send, parse_mode="Markdown", reply_markup=dynamic_main_menu) 
+            await update.message.reply_text(message_to_send, parse_mode="Markdown", reply_markup=dynamic_main_menu)
             await notify_points_awarded(update.get_bot(), update.effective_chat.id, user_id_str, POINTS_FOR_CLUB_TIP, "مطالعه نکته سلامتی باشگاه")
             
             if new_tip_usage_count >= CLUB_TIP_BADGE_THRESHOLD:
@@ -822,50 +823,51 @@ if __name__ == '__main__':
             States.AWAITING_GENDER: [
                 MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start),
                 MessageHandler(filters.Regex("^(زن|مرد)$"), request_gender_handler),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, 
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
                                lambda update, context: update.message.reply_text("لطفاً یکی از گزینه‌های «زن» یا «مرد» را با دکمه انتخاب کنید یا بازگردید.", reply_markup=GENDER_SELECTION_KEYBOARD))
             ],
             States.DOCTOR_CONVERSATION: [
                 MessageHandler(filters.Regex("^(❓ سوال جدید از دکتر|🔙 بازگشت به منوی اصلی)$"), doctor_conversation_handler),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, doctor_conversation_handler)
             ],
-            States.AWAITING_CLUB_JOIN_CONFIRMATION: [ 
+            States.AWAITING_CLUB_JOIN_CONFIRMATION: [
                 MessageHandler(filters.Regex("^(✅ بله، عضو می‌شوم|❌ خیر، فعلاً نه)$"), handle_club_join_confirmation),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, 
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
                                lambda update, context: update.message.reply_text("لطفاً با استفاده از دکمه‌ها پاسخ دهید.", reply_markup=CLUB_JOIN_CONFIRMATION_KEYBOARD))
             ],
-            States.PROFILE_VIEW: [ 
+            States.PROFILE_VIEW: [
                 MessageHandler(filters.Regex("^(✏️ تکمیل/ویرایش نام|💔 لغو عضویت از باشگاه|🔙 بازگشت به منوی اصلی)$"), profile_view_handler),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, 
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
                                lambda update, context: update.message.reply_text("لطفاً یکی از گزینه‌های پروفایل را انتخاب کنید.", reply_markup=PROFILE_VIEW_KEYBOARD))
             ],
-            States.AWAITING_CANCEL_MEMBERSHIP_CONFIRMATION: [ 
+            States.AWAITING_CANCEL_MEMBERSHIP_CONFIRMATION: [
                 MessageHandler(filters.Regex("^(✅ بله، عضویتم لغو شود|❌ خیر، منصرف شدم)$"), handle_cancel_membership_confirmation),
-                 MessageHandler(filters.TEXT & ~filters.COMMAND, 
+                 MessageHandler(filters.TEXT & ~filters.COMMAND,
                                lambda update, context: update.message.reply_text("لطفاً با استفاده از دکمه‌ها پاسخ دهید.", reply_markup=CANCEL_MEMBERSHIP_CONFIRMATION_KEYBOARD))
             ],
             States.AWAITING_FIRST_NAME: [
-                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler), 
+                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, awaiting_first_name_handler)
             ],
             States.AWAITING_LAST_NAME: [
-                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler), 
+                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, awaiting_last_name_handler)
             ],
         },
         fallbacks=[
             CommandHandler("cancel", cancel), # تابع cancel تعریف شده است
-            CommandHandler("start", start), 
-            MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start), 
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start),
         ],
         persistent=False, name="main_conversation"
     )
-    
-    telegram_application.add_handler(CommandHandler("myprofile", my_profile_info_handler)) 
-    telegram_application.add_handler(CommandHandler("clubtip", health_tip_command_handler)) 
+
+    telegram_application.add_handler(CommandHandler("myprofile", my_profile_info_handler))
+    telegram_application.add_handler(CommandHandler("clubtip", health_tip_command_handler))
+    # CommandHandler /joinclub و /clubstatus حذف شدند چون از طریق منو مدیریت می‌شوند
     telegram_application.add_handler(conv_handler)
     telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message)) # fallback_message تعریف شده است
-    
+
     logger.info("ربات تلگرام در حال شروع polling...")
     try:
         telegram_application.run_polling(allowed_updates=Update.ALL_TYPES)
