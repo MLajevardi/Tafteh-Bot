@@ -30,7 +30,8 @@ load_dotenv()
 db = None
 try:
     # ابتدا لاگ‌گیری پایه را برای این بخش تنظیم می‌کنیم
-    logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+    # این basicConfig اولیه است، basicConfig بعدی آن را override خواهد کرد اگر logger اصلی برنامه باشد.
+    logging.basicConfig(format="%(asctime)s - FIRMWARE_INIT - %(levelname)s - %(message)s", level=logging.INFO)
     
     cred_path_render = os.getenv("FIREBASE_CREDENTIALS_PATH", "/etc/secrets/firebase-service-account-key.json")
     cred_path_local = "firebase-service-account-key.json"
@@ -40,22 +41,23 @@ try:
         logging.warning(f"فایل کلید Firebase در مسیر '{cred_path}' یافت نشد. ربات بدون اتصال به دیتابیس اجرا خواهد شد.")
     else:
         cred = credentials.Certificate(cred_path)
-        if not firebase_admin._apps:
+        if not firebase_admin._apps: # جلوگیری از مقداردهی اولیه مجدد اگر قبلا انجام شده
             firebase_admin.initialize_app(cred)
         db = firestore.client()
         logging.info("Firebase Admin SDK با موفقیت مقداردهی اولیه شد و به Firestore متصل است.")
 except Exception as e:
-    # اگر basicConfig هنوز توسط لاگر اصلی برنامه override نشده، این لاگ ممکن است با فرمت پایه چاپ شود
     logging.error(f"خطای بحرانی در مقداردهی اولیه Firebase Admin SDK: {e}", exc_info=True)
 
 
-# تنظیمات لاگ‌گیری اصلی برنامه (این ممکن است تنظیمات قبلی basicConfig را override کند)
+# تنظیمات لاگ‌گیری اصلی برنامه
+# این basicConfig ممکن است تنظیمات قبلی را override کند اگر root logger باشد.
+# برای اطمینان، می‌توانیم از getLogger و افزودن handler استفاده کنیم، اما فعلا basicConfig را نگه می‌داریم.
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     handlers=[logging.StreamHandler()]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # لاگر اصلی برنامه با نام ماژول فعلی
 
 logger.info("اسکریپت main.py شروع به کار کرد. در حال بررسی متغیرهای محیطی...")
 
@@ -137,7 +139,7 @@ HEALTH_TIPS_FOR_CLUB = [
     "برای کاهش استرس، تکنیک‌های آرام‌سازی مانند مدیتیشن یا تنفس عمیق را امتحان کنید."
 ]
 
-# --- توابع کمکی دیتابیس ---
+# --- توابع دیتابیس ---
 def get_or_create_user_profile(user_id: str, username: str = None, first_name: str = None) -> dict:
     if not db:
         logger.warning(f"DB: Firestore client (db) is None. Profile for user {user_id} will be in-memory mock.")
@@ -273,8 +275,7 @@ def _prepare_doctor_system_prompt(age: int, gender: str) -> str:
 async def notify_points_awarded(bot: Application.bot, chat_id: int, user_id_str: str, points_awarded: int, reason: str):
     if not db: return
     try:
-        # ابتدا مطمئن شویم پروفایل کاربر در صورت عدم وجود ایجاد شده
-        await asyncio.to_thread(get_or_create_user_profile, user_id_str) # username و first_name لازم نیست اینجا
+        await asyncio.to_thread(get_or_create_user_profile, user_id_str)
         user_profile_updated = await asyncio.to_thread(get_user_profile_data, user_id_str)
         total_points = user_profile_updated.get('points', 0) if user_profile_updated else points_awarded
         
@@ -295,8 +296,6 @@ async def award_badge_if_not_already_awarded(bot: Application.bot, chat_id: int,
                 await asyncio.to_thread(update_user_profile_data, user_id_str, {'badges': firestore.ArrayUnion([badge_name])})
                 await bot.send_message(chat_id=chat_id, text=f"🏆 تبریک! شما نشان '{badge_name}' را دریافت کردید!")
                 logger.info(f"نشان '{badge_name}' به کاربر {user_id_str} اعطا شد.")
-            # else: # نیازی به لاگ کردن نیست اگر از قبل داشته
-            #     logger.info(f"کاربر {user_id_str} از قبل نشان '{badge_name}' را داشته است.")
     except Exception as e:
         logger.error(f"خطا در اعطای نشان '{badge_name}' به کاربر {user_id_str}: {e}", exc_info=True)
 
@@ -376,7 +375,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
-    user_id = user.id if user else "Unknown" # اضافه کردن بررسی وجود user
+    user_id = user.id if user else "Unknown"
     logger.info(f"User {user_id} called /cancel. Delegating to start handler.")
     context.user_data['_is_cancel_flow'] = True
     if update.effective_chat:
@@ -596,7 +595,7 @@ async def my_profile_info_handler(update: Update, context: ContextTypes.DEFAULT_
     user = update.effective_user
     user_id_str = str(user.id)
     logger.info(f"کاربر {user_id_str} درخواست 'پروفایل و باشگاه' یا /myprofile را داد.")
-    
+
     if not db:
         await update.message.reply_text("سیستم پروفایل موقتا در دسترس نیست.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
         return States.MAIN_MENU
@@ -670,7 +669,7 @@ async def handle_cancel_membership_confirmation(update: Update, context: Context
         try:
             await asyncio.to_thread(update_user_profile_data, user_id_str,
                                     {"is_club_member": False, "points": 0, "badges": [],
-                                     "club_join_date": None, "club_tip_usage_count": 0 })
+                                     "club_join_date": None, "club_tip_usage_count": 0 }) # همچنین موارد مربوط به پروفایل نام را نیز می‌توان ریست کرد
             context.user_data['is_club_member_cached'] = False
             logger.info(f"عضویت کاربر {user_id_str} لغو شد و امتیازات/نشان‌هایش پاک گردید.")
             await update.message.reply_text("عضویت شما از باشگاه مشتریان با موفقیت لغو شد. امتیازات و نشان‌های شما نیز حذف گردید.")
@@ -679,10 +678,12 @@ async def handle_cancel_membership_confirmation(update: Update, context: Context
             await update.message.reply_text("مشکلی در لغو عضویت شما پیش آمد.")
     elif text == "❌ خیر، منصرف شدم":
         await update.message.reply_text("خوشحالیم که همچنان عضو باشگاه مشتریان تافته باقی می‌مانید!")
+        # بازگشت به صفحه پروفایل به جای منوی اصلی
+        return await my_profile_info_handler(update, context)
     else:
         await update.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید.", reply_markup=CANCEL_MEMBERSHIP_CONFIRMATION_KEYBOARD)
         return States.AWAITING_CANCEL_MEMBERSHIP_CONFIRMATION
-    return await start(update, context)
+    return await start(update, context) # در صورت لغو موفق یا خطا، به منوی اصلی برمی‌گردد
 
 async def awaiting_first_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
@@ -850,16 +851,16 @@ if __name__ == '__main__':
                                lambda update, context: update.message.reply_text("لطفاً با استفاده از دکمه‌ها پاسخ دهید.", reply_markup=CANCEL_MEMBERSHIP_CONFIRMATION_KEYBOARD))
             ],
             States.AWAITING_FIRST_NAME: [
-                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler), # بازگشت به نمایش پروفایل
+                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, awaiting_first_name_handler)
             ],
             States.AWAITING_LAST_NAME: [
-                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler), # بازگشت به نمایش پروفایل
+                MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, awaiting_last_name_handler)
             ],
         },
         fallbacks=[
-            CommandHandler("cancel", cancel), # تابع cancel تعریف شده است
+            CommandHandler("cancel", cancel), 
             CommandHandler("start", start),
             MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start),
         ],
@@ -869,7 +870,7 @@ if __name__ == '__main__':
     telegram_application.add_handler(CommandHandler("myprofile", my_profile_info_handler))
     telegram_application.add_handler(CommandHandler("clubtip", health_tip_command_handler))
     telegram_application.add_handler(conv_handler)
-    telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message)) # fallback_message تعریف شده است
+    telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
 
     logger.info("ربات تلگرام در حال شروع polling...")
     try:
