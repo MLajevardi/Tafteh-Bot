@@ -55,6 +55,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL_NAME = os.getenv("OPENROUTER_MODEL_NAME", "openai/gpt-3.5-turbo")
 WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "https://tafteh.ir/wp-content/uploads/2024/12/navar-nehdashti2-600x600.jpg")
 URL_TAFTEH_WEBSITE = "https://tafteh.ir/"
+POINTS_FOR_DOCTOR_QUESTION = 5 # امتیاز برای هر سوال از دکتر تافته
 
 if not TELEGRAM_TOKEN:
     logger.error("!!! بحرانی: توکن تلگرام (BOT_TOKEN) در متغیرهای محیطی یافت نشد. برنامه خارج می‌شود.")
@@ -340,6 +341,14 @@ async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFA
     chat_history.append({"role": "assistant", "content": assistant_response})
     context.user_data["doctor_chat_history"] = chat_history
 
+    # اعطای امتیاز برای پرسیدن سوال از دکتر (پس از دریافت پاسخ موفق از LLM)
+    if db and not assistant_response.startswith("❌"): 
+        try:
+            await asyncio.to_thread(update_user_profile_data, user_id_str, {"points": firestore.Increment(POINTS_FOR_DOCTOR_QUESTION)})
+            logger.info(f"کاربر {user_id_str} تعداد {POINTS_FOR_DOCTOR_QUESTION} امتیاز برای سوال از دکتر دریافت کرد.")
+        except Exception as e:
+            logger.error(f"خطا در اعطای امتیاز به کاربر {user_id_str} برای سوال از دکتر: {e}", exc_info=True)
+
     await update.message.reply_text(assistant_response, parse_mode="Markdown", reply_markup=DOCTOR_CONVERSATION_KEYBOARD)
     return States.DOCTOR_CONVERSATION
 
@@ -397,7 +406,7 @@ async def join_club_command_handler(update: Update, context: ContextTypes.DEFAUL
         user_profile = await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
         
         if user_profile and user_profile.get('is_club_member', False):
-            await update.message.reply_text("شما از قبل عضو باشگاه مشتریان تافته هستید! 🎉")
+            await update.message.reply_text("شما از قبل عضو باشگاه مشتریان تافته هستید! 🎉", reply_markup=MAIN_MENU_KEYBOARD)
         else:
             new_points = 50 
             await asyncio.to_thread(update_user_profile_data, user_id_str, {"is_club_member": True, "points": firestore.Increment(new_points)})
@@ -411,7 +420,7 @@ async def join_club_command_handler(update: Update, context: ContextTypes.DEFAUL
         logger.error(f"خطا در پردازش عضویت باشگاه برای کاربر {user_id_str}: {e}", exc_info=True)
         await update.message.reply_text("متاسفانه مشکلی در فرآیند عضویت شما پیش آمد. لطفاً بعداً دوباره تلاش کنید.")
 
-async def club_status_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None: # تابع اضافه شده برای /clubstatus
+async def club_status_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None: 
     user = update.effective_user
     user_id_str = str(user.id)
     logger.info(f"کاربر {user_id_str} درخواست وضعیت عضویت در باشگاه را با /clubstatus داد.")
@@ -432,7 +441,6 @@ async def club_status_command_handler(update: Update, context: ContextTypes.DEFA
     except Exception as e:
         logger.error(f"خطا در بررسی وضعیت عضویت باشگاه برای کاربر {user_id_str} با فرمان /clubstatus: {e}", exc_info=True)
         await update.message.reply_text("متاسفانه مشکلی در بررسی وضعیت عضویت شما پیش آمد.")
-
 
 def get_or_create_user_profile(user_id: str, username: str = None, first_name: str = None) -> dict:
     if not db:
@@ -554,7 +562,7 @@ if __name__ == '__main__':
     )
 
     telegram_application.add_handler(CommandHandler("joinclub", join_club_command_handler))
-    telegram_application.add_handler(CommandHandler("clubstatus", club_status_command_handler)) # تابع مربوطه تعریف شده است
+    telegram_application.add_handler(CommandHandler("clubstatus", club_status_command_handler)) 
     telegram_application.add_handler(conv_handler)
     telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
     
