@@ -26,14 +26,14 @@ from telegram.ext import (
 load_dotenv()
 
 # مقداردهی اولیه Firebase Admin SDK در ابتدای برنامه
-db = None # تعریف اولیه db به عنوان None
+db = None 
 try:
     cred_path_render = os.getenv("FIREBASE_CREDENTIALS_PATH", "/etc/secrets/firebase-service-account-key.json")
     cred_path_local = "firebase-service-account-key.json" 
     cred_path = cred_path_render if os.path.exists(cred_path_render) else cred_path_local
     
     if not os.path.exists(cred_path):
-        logging.warning(f"فایل کلید Firebase در مسیر '{cred_path}' یافت نشد. ربات بدون اتصال به دیتابیس اجرا خواهد شد (اگر منطق برنامه اجازه دهد).")
+        logging.warning(f"فایل کلید Firebase در مسیر '{cred_path}' یافت نشد. ربات بدون اتصال به دیتابیس اجرا خواهد شد.")
     else:
         cred = credentials.Certificate(cred_path)
         if not firebase_admin._apps: 
@@ -44,13 +44,12 @@ except Exception as e:
     logging.error(f"خطای بحرانی در مقداردهی اولیه Firebase Admin SDK: {e}", exc_info=True)
 
 
-# تنظیمات لاگ‌گیری پس از مقداردهی اولیه Firebase
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     handlers=[logging.StreamHandler()]
 )
-logger = logging.getLogger(__name__) # لاگر اصلی برنامه
+logger = logging.getLogger(__name__) 
 
 logger.info("اسکریپت main.py شروع به کار کرد. در حال بررسی متغیرهای محیطی...")
 
@@ -79,7 +78,7 @@ class States(Enum):
     DOCTOR_CONVERSATION = 4
 
 MAIN_MENU_KEYBOARD = ReplyKeyboardMarkup(
-    [["👨‍⚕️ دکتر تافته", "📦 راهنمای محصولات"]],
+    [["👨‍⚕️ دکتر تافته", "📦 راهنمای محصولات"], ["⭐ عضویت/وضعیت باشگاه مشتریان"]], # دکمه جدید اضافه شد
     resize_keyboard=True
 )
 
@@ -102,9 +101,7 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
-    
     messages_payload = [{"role": "system", "content": system_prompt}] + chat_history
-
     body = {
         "model": OPENROUTER_MODEL_NAME,
         "messages": messages_payload,
@@ -118,7 +115,6 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
             resp.raise_for_status()
             data = resp.json()
             logger.debug(f"پاسخ خام دریافت شده از OpenRouter: {data}")
-            
             llm_response_content = ""
             if data.get("choices") and len(data["choices"]) > 0 and data["choices"][0].get("message") and data["choices"][0]["message"].get("content"):
                 llm_response_content = data["choices"][0]["message"]["content"].strip()
@@ -126,51 +122,41 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
                 return llm_response_content
             else:
                 logger.error(f"ساختار پاسخ دریافت شده از OpenRouter نامعتبر یا فاقد محتوا است: {data}")
-                return "❌ مشکلی در پردازش پاسخ از سرویس پزشک مجازی رخ داد. لطفاً دوباره تلاش کنید."
-            
-        except httpx.HTTPStatusError as e:
-            logger.error(f"خطای HTTP از OpenRouter: {e.response.status_code} - {e.response.text}")
-            return f"❌ مشکل در ارتباط با سرویس پزشک مجازی (کد خطا: {e.response.status_code}). لطفاً بعداً تلاش کنید."
-        except httpx.RequestError as e:
-            logger.error(f"خطای درخواست به OpenRouter (ممکن است مشکل شبکه باشد): {e}")
-            return "❌ مشکل در برقراری ارتباط با سرویس پزشک مجازی. لطفاً از اتصال اینترنت خود مطمئن شوید و دوباره تلاش کنید."
-        except Exception as e:
-            logger.error(f"خطای پیش‌بینی نشده در تابع ask_openrouter: {e}", exc_info=True)
-            return "❌ مشکلی پیش‌بینی نشده در دریافت پاسخ پیش آمده است. لطفاً دوباره تلاش کنید."
+                return "❌ مشکلی در پردازش پاسخ از سرویس پزشک مجازی رخ داد."
+        except Exception as e: # مدیریت کلی‌تر خطاها برای بازگرداندن پیام مناسب
+            logger.error(f"خطا در ارتباط یا پردازش پاسخ OpenRouter: {e}", exc_info=True)
+            return "❌ بروز خطا در ارتباط با سرویس پزشک مجازی. لطفاً مجدداً تلاش نمایید."
+
 
 def _prepare_doctor_system_prompt(age: int, gender: str) -> str:
     return (
         f"شما یک پزشک عمومی متخصص، بسیار دقیق، با دانش به‌روز، صبور و همدل به نام 'دکتر تافته' هستید. کاربری که با شما صحبت می‌کند {age} ساله و {gender} است. "
         "وظیفه شما ارائه راهنمایی پزشکی اولیه از طریق یک مکالمه چند مرحله‌ای هدفمند به زبان فارسی روان، صحیح، علمی و قابل فهم برای عموم است. شما هرگز تشخیص قطعی نمی‌دهید و دارو تجویز نمی‌کنید، بلکه اطلاعات اولیه را جمع‌آوری کرده، توصیه‌های عمومی و ایمن ارائه می‌دهید و در صورت لزوم کاربر را به مراجعه به پزشک راهنمایی می‌کنید."
         "**لحن شما باید حرفه‌ای، محترمانه، علمی و همدلانه باشد. از به‌کار بردن عبارات بیش از حد احساسی، شعاری، یا جملات پایانی بسیار طولانی و غیرضروری مانند 'ایمان دارم بهبودی خوبی خواهید داشت' یا 'پشتیبانی همیشگی من در دسترس شماست' جداً خودداری کنید. پاسخ‌های خود را مختصر و مفید نگه دارید.**"
-
         "**روند مکالمه شما باید به صورت اجباری مراحل زیر را طی کند:** "
-        "1.  **دریافت مشکل اولیه کاربر:** کاربر مشکل یا سوال پزشکی خود را مطرح می‌کند. "
+        "1.  **دریافت مشکل اولیه کاربر.** "
         "2.  **مرحله پرسشگری فعال و دقیق (بسیار کلیدی و الزامی):** به محض دریافت مشکل اولیه، **به هیچ وجه نباید اطلاعات عمومی یا توصیه فوری ارائه دهید.** شما موظف هستید ابتدا **حداقل یک یا دو سوال تکمیلی بسیار دقیق، کوتاه و کاملاً مرتبط** با همان مشکل مطرح شده از کاربر بپرسید تا جزئیات بیشتری کسب کنید. (مثال برای سردرد: 'سردردتان از کی شروع شده و دقیقاً کجای سرتان است؟ آیا حالت تهوع یا حساسیت به نور هم دارید؟'). "
         "3.  **ادامه پرسشگری هوشمندانه:** بر اساس پاسخ کاربر، در صورت نیاز، سوالات تکمیلی دیگری بپرسید (همچنان یک یا دو سوال کوتاه و مرتبط در هر نوبت). "
         "4.  **پرسش برای اطلاعات تکمیلی نهایی از کاربر (الزامی قبل از هرگونه توصیه):** پس از اینکه چند سوال کلیدی پرسیدید و قبل از ارائه هرگونه جمع‌بندی یا توصیه، **حتماً و الزاماً از کاربر این سوال را بپرسید: 'آیا نکته یا علامت دیگری در مورد این مشکل وجود دارد که بخواهید اضافه کنید یا سوال دیگری در این مورد دارید؟'** "
-        "5.  **ارائه توصیه‌های عمومی و اولیه (پس از مرحله ۴):** تنها پس از پاسخ کاربر به سوال مرحله ۴ (و اگر اطلاعات جدید و مهمی ارائه نداد یا گفت سوال دیگری ندارد)، می‌توانید توصیه‌های عمومی و ایمن اولیه ارائه دهید (مانند استراحت، مصرف مایعات کافی، کمپرس سرد یا گرم در موارد درد). **از توصیه داروهای خاص یا تشخیص قطعی خودداری کنید.** در پایان توصیه‌ها، همیشه تاکید کنید که اگر علائم ادامه یافت یا شدیدتر شد، باید به پزشک مراجعه کنند. سپس مکالمه را با یک جمله کوتاه و حرفه‌ای مانند 'امیدوارم بهتر شوید. آیا سوال دیگری هست که بتوانم کمک کنم؟' به پایان برسانید یا منتظر پاسخ کاربر بمانید."
-
+        "5.  **ارائه توصیه‌های عمومی و اولیه (پس از مرحله ۴):** تنها پس از پاسخ کاربر به سوال مرحله ۴ (و اگر اطلاعات جدید و مهمی ارائه نداد یا گفت سوال دیگری ندارد)، می‌توانید توصیه‌های عمومی و ایمن اولیه ارائه دهید. **از توصیه داروهای خاص یا تشخیص قطعی خودداری کنید.** در پایان توصیه‌ها، همیشه تاکید کنید که اگر علائم ادامه یافت یا شدیدتر شد، باید به پزشک مراجعه کنند. سپس مکالمه را با یک جمله کوتاه و حرفه‌ای مانند 'امیدوارم بهتر شوید. آیا سوال دیگری هست که بتوانم کمک کنم؟' به پایان برسانید یا منتظر پاسخ کاربر بمانید."
         "**سایر دستورالعمل‌های مهم:** "
-        "   - از اصطلاحات صحیح و رایج پزشکی و عمومی در زبان فارسی استفاده کنید. از عبارات نامفهوم یا با ترجمه ضعیف بپرهیزید. "
-        "   - وقتی کاربر در مورد مضرات یک چیز سوال می‌کند، پاسخ محتاطانه و چندجانبه ارائه دهید. "
-        "   - در تفسیر علائم کاربر دقت کنید. 'دل درد' لزوماً به معنای درد قلبی نیست. "
+        "   - از اصطلاحات صحیح و رایج پزشکی و عمومی در زبان فارسی استفاده کنید. "
         "   - اگر سوالی به وضوح پزشکی نبود، با این عبارت دقیق پاسخ دهید: 'متاسفم، من یک ربات پزشک هستم و فقط می‌توانم به سوالات مرتبط با حوزه پزشکی پاسخ دهم. چطور می‌توانم در زمینه پزشکی به شما کمک کنم؟' "
-        "   - در تمامی پاسخ‌های خود، مستقیماً به سراغ مطلب بروید و از مقدمات غیرضروری (مانند 'بله'، 'خب') استفاده نکنید. "
+        "   - در تمامی پاسخ‌های خود، مستقیماً به سراغ مطلب بروید و از مقدمات غیرضروری استفاده نکنید. "
         "   - همیشه محترمانه و دقیق باشید."
     )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     user = update.effective_user
     user_id_str = str(user.id) 
-    logger.info(f"کاربر {user_id_str} ({user.full_name if user.full_name else user.username}) /start را فراخوانی کرد یا به منوی اصلی بازگشت.")
+    logger.info(f"کاربر {user_id_str} ({user.full_name if user.full_name else user.username}) /start یا بازگشت به منو.")
     
     if "doctor_chat_history" in context.user_data:
         del context.user_data["doctor_chat_history"]
-        logger.info(f"تاریخچه مکالمه دکتر برای کاربر {user_id_str} پاک شد.")
+        logger.info(f"تاریخچه مکالمه دکتر برای کاربر {user_id_str} پاک شد (در صورت وجود).")
     if "system_prompt_for_doctor" in context.user_data:
         del context.user_data["system_prompt_for_doctor"]
-        logger.info(f"پرامپت سیستمی دکتر برای کاربر {user_id_str} پاک شد.")
+        logger.info(f"پرامپت سیستمی دکتر برای کاربر {user_id_str} پاک شد (در صورت وجود).")
     
     if db: 
         try:
@@ -204,7 +190,9 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if db: 
             try:
                 user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
-                if user_profile:
+                if user_profile: # اطمینان از اینکه پروفایل وجود دارد
+                    # اگر get_or_create_user_profile در start فراخوانی شده باشد، پروفایل باید وجود داشته باشد
+                    # مگر اینکه اولین بار باشد و get_or_create_user_profile در start به خطا خورده باشد
                     age = user_profile.get("age")
                     gender = user_profile.get("gender")
             except Exception as e:
@@ -219,14 +207,13 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             
             await update.message.reply_text(
                 f"مشخصات شما (سن: {age}، جنسیت: {gender}) از قبل در سیستم موجود است.\n"
-                "اکنون می‌توانید سوال پزشکی خود را از دکتر تافته بپرسید. دکتر تافته ممکن است برای ارائه پاسخ بهتر، سوالات بیشتری از شما بپرسد.",
+                "اکنون می‌توانید سوال پزشکی خود را از دکتر تافته بپرسید.",
                 reply_markup=DOCTOR_CONVERSATION_KEYBOARD
             )
             return States.DOCTOR_CONVERSATION
         else: 
             logger.info(f"سن یا جنسیت برای کاربر {user_id_str} در دیتابیس موجود نیست یا کامل نیست. درخواست سن.")
-            # پاک کردن مقادیر احتمالی ناقص از user_data قبل از پرسیدن مجدد
-            if "age" in context.user_data: del context.user_data["age"]
+            if "age" in context.user_data: del context.user_data["age"] # پاک کردن مقادیر ناقص احتمالی user_data
             if "gender" in context.user_data: del context.user_data["gender"]
             await update.message.reply_text(
                 "بسیار خب. برای اینکه بتوانم بهتر به شما کمک کنم، لطفاً سن خود را وارد کنید:",
@@ -242,6 +229,8 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             reply_markup=reply_markup_inline
         )
         return States.MAIN_MENU
+    elif text == "⭐ عضویت/وضعیت باشگاه مشتریان": # کنترل دکمه جدید
+        return await club_status_or_join_handler(update, context)
     else: 
         await update.message.reply_text(
             "لطفاً یکی از گزینه‌های موجود در منو را انتخاب کنید.",
@@ -283,7 +272,7 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.error(f"خطا در ذخیره سن/جنسیت کاربر {user_id_str} در دیتابیس: {e}", exc_info=True)
 
-    context.user_data["age"] = age # ذخیره در user_data برای استفاده در همین جلسه
+    context.user_data["age"] = age 
     context.user_data["gender"] = gender
     logger.info(f"کاربر {user_id_str} جنسیت خود را '{gender}' انتخاب کرد. سن: {age}")
 
@@ -297,7 +286,7 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
         f"✅ مشخصات شما ثبت شد:\n"
         f"سن: {age} سال\n"
         f"جنسیت: {gender}\n\n"
-        "اکنون می‌توانید سوال پزشکی خود را از دکتر تافته بپرسید. دکتر تافته ممکن است برای ارائه پاسخ بهتر، سوالات بیشتری از شما بپرسد.",
+        "اکنون می‌توانید سوال پزشکی خود را از دکتر تافته بپرسید.", # بخش "دکتر ممکن است سوالات بیشتری بپرسد" حذف شد چون در پرامپت هست
         reply_markup=DOCTOR_CONVERSATION_KEYBOARD
     )
     return States.DOCTOR_CONVERSATION
@@ -333,11 +322,9 @@ async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFA
         else:
             logger.error(f"DCH: Could not rebuild system prompt for user {user_id_str}. Age/Gender missing. Returning to main menu.")
             await update.message.reply_text("مشکلی در بازیابی اطلاعات شما پیش آمده. لطفاً از ابتدا با انتخاب 'دکتر تافته' شروع کنید.", reply_markup=MAIN_MENU_KEYBOARD)
-            # پاک کردن اطلاعات ناقص احتمالی دکتر از user_data
             if "doctor_chat_history" in context.user_data: del context.user_data["doctor_chat_history"]
             if "system_prompt_for_doctor" in context.user_data: del context.user_data["system_prompt_for_doctor"]
-            return await start(update, context) # بازگشت کامل به منوی اصلی با پاکسازی انتخابی
-
+            return await start(update, context) 
 
     if user_question == "🔙 بازگشت به منوی اصلی":
         logger.info(f"DCH: User {user_id_str} selected 'بازگشت به منوی اصلی'. Delegating to start handler.")
@@ -376,17 +363,91 @@ async def fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reply_markup=MAIN_MENU_KEYBOARD
     )
 
+# --- توابع مربوط به باشگاه مشتریان ---
+async def club_status_or_join_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
+    """وضعیت عضویت کاربر را نشان می‌دهد یا گزینه عضویت را پیشنهاد می‌کند."""
+    user = update.effective_user
+    user_id_str = str(user.id)
+    logger.info(f"کاربر {user_id_str} گزینه 'عضویت/وضعیت باشگاه مشتریان' را انتخاب کرد.")
+
+    if not db:
+        await update.message.reply_text("متاسفانه در حال حاضر امکان دسترسی به سیستم باشگاه مشتریان وجود ندارد. لطفاً بعداً تلاش کنید.", reply_markup=MAIN_MENU_KEYBOARD)
+        return States.MAIN_MENU
+
+    try:
+        user_profile = await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
+        
+        if user_profile.get('is_club_member', False):
+            points = user_profile.get('points', 0)
+            await update.message.reply_text(f"شما عضو باشگاه مشتریان تافته هستید! 🏅\nامتیاز فعلی شما: {points} امتیاز.", reply_markup=MAIN_MENU_KEYBOARD)
+        else:
+            join_club_keyboard = ReplyKeyboardMarkup([["بله، مایلم عضو شوم"], ["نه، فعلاً نه"]], resize_keyboard=True, one_time_keyboard=True)
+            await update.message.reply_text(
+                "شما هنوز عضو باشگاه مشتریان تافته نیستید. آیا مایل به عضویت و بهره‌مندی از مزایا و امتیازات ویژه هستید؟",
+                reply_markup=join_club_keyboard
+            )
+            # می‌توان یک حالت جدید برای انتظار پاسخ به این سوال تعریف کرد یا از همینجا مدیریت کرد
+            # برای سادگی فعلا به MAIN_MENU برمی‌گردیم و کاربر باید با دستور /joinclub عضو شود
+            # یا اینکه یک ConversationHandler جدا برای این بخش داشته باشیم.
+            # فعلا ساده نگه می‌داریم:
+            # return States.AWAITING_CLUB_JOIN_DECISION # (نیاز به تعریف حالت و کنترل کننده جدید)
+            # یا
+            await update.message.reply_text("برای عضویت می‌توانید دستور /joinclub را نیز ارسال کنید.", reply_markup=MAIN_MENU_KEYBOARD)
+
+
+    except Exception as e:
+        logger.error(f"خطا در پردازش وضعیت/عضویت باشگاه برای کاربر {user_id_str}: {e}", exc_info=True)
+        await update.message.reply_text("متاسفانه مشکلی در بررسی وضعیت عضویت شما پیش آمد.", reply_markup=MAIN_MENU_KEYBOARD)
+    
+    return States.MAIN_MENU # پس از نمایش وضعیت یا پیشنهاد، به منوی اصلی بازمی‌گردد
+
+async def join_club_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    user_id_str = str(user.id)
+    logger.info(f"کاربر {user_id_str} درخواست عضویت در باشگاه مشتریان را با /joinclub داد.")
+
+    if not db:
+        await update.message.reply_text("متاسفانه در حال حاضر امکان اتصال به سیستم باشگاه مشتریان وجود ندارد. لطفاً بعداً تلاش کنید.")
+        return
+
+    try:
+        user_profile = await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name) # اطمینان از وجود پروفایل
+        
+        if user_profile and user_profile.get('is_club_member', False):
+            await update.message.reply_text("شما از قبل عضو باشگاه مشتریان تافته هستید! 🎉")
+        else:
+            new_points = 50 # امتیاز برای عضویت
+            await asyncio.to_thread(update_user_profile_data, user_id_str, {"is_club_member": True, "points": firestore.Increment(new_points)})
+            logger.info(f"کاربر {user_id_str} با موفقیت به باشگاه مشتریان پیوست و {new_points} امتیاز دریافت کرد.")
+            await update.message.reply_text(
+                f"عضویت شما در باشگاه مشتریان تافته با موفقیت انجام شد! ✨\n"
+                f"به شما {new_points} امتیاز عضویت تعلق گرفت. از همراهی شما سپاسگزاریم.",
+                reply_markup=MAIN_MENU_KEYBOARD # بازگشت به منوی اصلی
+            )
+    except Exception as e:
+        logger.error(f"خطا در پردازش عضویت باشگاه برای کاربر {user_id_str}: {e}", exc_info=True)
+        await update.message.reply_text("متاسفانه مشکلی در فرآیند عضویت شما پیش آمد. لطفاً بعداً دوباره تلاش کنید.")
+
+
+# --- توابع مربوط به دیتابیس Firestore ---
 def get_or_create_user_profile(user_id: str, username: str = None, first_name: str = None) -> dict:
     if not db:
         logger.warning(f"DB: Firestore client (db) is None. Cannot access profile for user {user_id}.")
-        return {"user_id": user_id, "username": username, "first_name": first_name, "age": None, "gender": None}
+        return {"user_id": user_id, "username": username, "first_name": first_name, "age": None, "gender": None, "is_club_member": False, "points": 0, "badges": []}
 
     user_ref = db.collection('users').document(user_id)
     user_doc = user_ref.get()
 
     if user_doc.exists:
         logger.info(f"DB: پروفایل کاربر {user_id} از Firestore خوانده شد.")
-        return user_doc.to_dict()
+        # اطمینان از وجود فیلدهای پیش‌فرض باشگاه مشتریان و گیمیفیکیشن
+        user_data = user_doc.to_dict()
+        if 'is_club_member' not in user_data: user_data['is_club_member'] = False
+        if 'points' not in user_data: user_data['points'] = 0
+        if 'badges' not in user_data: user_data['badges'] = []
+        # اگر فیلدی نیاز به آپدیت داشت، اینجا می‌توان انجام داد، اما ساده‌تر است که فقط بخوانیم
+        # user_ref.update({'is_club_member': user_data['is_club_member'], 'points': user_data['points'], 'badges': user_data['badges']})
+        return user_data
     else:
         logger.info(f"DB: پروفایل جدیدی برای کاربر {user_id} در Firestore ایجاد می‌شود.")
         user_data = {
@@ -422,9 +483,16 @@ def get_user_profile_data(user_id: str) -> dict | None:
     user_ref = db.collection('users').document(user_id)
     user_doc = user_ref.get()
     if user_doc.exists:
-        return user_doc.to_dict()
+        # اطمینان از وجود فیلدهای پیش‌فرض هنگام خواندن
+        user_data = user_doc.to_dict()
+        if 'is_club_member' not in user_data: user_data['is_club_member'] = False
+        if 'points' not in user_data: user_data['points'] = 0
+        if 'badges' not in user_data: user_data['badges'] = []
+        return user_data
     return None
 
+
+# --- بخش وب سرور Flask ---
 flask_app = Flask(__name__)
 @flask_app.route('/')
 def health_check():
@@ -440,6 +508,7 @@ def run_flask_app():
     except Exception as e:
         logger.error(f"ترد Flask: خطایی در اجرای وب سرور Flask رخ داد: {e}", exc_info=True)
 
+# --- مدیریت اجرای همزمان Flask و ربات ---
 if __name__ == '__main__':
     logger.info("بلوک اصلی برنامه (__name__ == '__main__') شروع شد.")
     
@@ -459,11 +528,12 @@ if __name__ == '__main__':
     logger.info("در حال ساخت اپلیکیشن ربات تلگرام...")
     telegram_application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
+    # تعریف ConversationHandler (بدون تغییر نسبت به قبل)
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             States.MAIN_MENU: [
-                MessageHandler(filters.Regex("^(👨‍⚕️ دکتر تافته|📦 راهنمای محصولات)$"), main_menu_handler),
+                MessageHandler(filters.Regex("^(👨‍⚕️ دکتر تافته|📦 راهنمای محصولات|⭐ عضویت/وضعیت باشگاه مشتریان)$"), main_menu_handler),
             ],
             States.AWAITING_AGE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, request_age_handler)
@@ -487,10 +557,13 @@ if __name__ == '__main__':
         name="main_conversation"
     )
 
+    # افزودن کنترل‌کننده‌ها به اپلیکیشن
+    telegram_application.add_handler(CommandHandler("joinclub", join_club_command_handler))
+    telegram_application.add_handler(CommandHandler("clubstatus", club_status_command_handler)) # اگر می‌خواهید این فرمان هم باشد
     telegram_application.add_handler(conv_handler)
     telegram_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_message))
     
-    logger.info("ربات تلگرام در حال شروع polling (این یک عملیات بلاک کننده است)...") # این تقریباً خط ۵۱۹ است
+    logger.info("ربات تلگرام در حال شروع polling...")
     try:
         telegram_application.run_polling(allowed_updates=Update.ALL_TYPES)
         logger.info("Polling ربات تلگرام متوقف شد.")
