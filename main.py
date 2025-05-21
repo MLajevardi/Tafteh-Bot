@@ -73,13 +73,13 @@ URL_TAFTEH_WEBSITE = "https://tafteh.ir/"
 POINTS_FOR_JOINING_CLUB = 50
 POINTS_FOR_PROFILE_COMPLETION = 20
 POINTS_FOR_NAME_COMPLETION = 15
-POINTS_FOR_CLUB_TIP = 2
+POINTS_FOR_CLUB_TIP = 0 # امتیاز برای نکته سلامتی طبق درخواست شما صفر شد
 
 BADGE_CLUB_MEMBER = "عضو باشگاه تافته 🏅"
 BADGE_PROFILE_COMPLETE = "پروفایل پایه کامل 🧑‍🔬"
 BADGE_FULL_PROFILE = "پروفایل طلایی ✨"
 BADGE_HEALTH_EXPLORER = "کاشف سلامت 🧭"
-CLUB_TIP_BADGE_THRESHOLD = 3
+CLUB_TIP_BADGE_THRESHOLD = 3 # معیار برای نشان کاشف سلامت همچنان می‌تواند باقی بماند
 
 if not TELEGRAM_TOKEN:
     logger.error("!!! بحرانی: توکن تلگرام (BOT_TOKEN) در متغیرهای محیطی یافت نشد. برنامه خارج می‌شود.")
@@ -161,7 +161,6 @@ def get_or_create_user_profile(user_id: str, username: str = None, first_name: s
                 "profile_completion_points_awarded": False, "club_tip_usage_count": 0, "club_join_date": None,
                 "name_first_db": None, "name_last_db": None, "profile_name_completion_points_awarded": False}
 
-
     default_fields = {
         'age': None, 'gender': None, 'is_club_member': False, 'points': 0, 'badges': [],
         'profile_completion_points_awarded': False, 'club_tip_usage_count': 0,
@@ -234,18 +233,20 @@ def get_user_profile_data(user_id: str) -> dict | None:
     return None
 
 # --- توابع کمکی ربات ---
-async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
+async def ask_openrouter(system_prompt: str, chat_history: list, model_override: str = None) -> str: # model_override اضافه شد
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
     messages_payload = [{"role": "system", "content": system_prompt}] + chat_history
+    current_model = model_override if model_override else OPENROUTER_MODEL_NAME
+
     body = {
-        "model": OPENROUTER_MODEL_NAME,
+        "model": current_model, # استفاده از current_model
         "messages": messages_payload,
         "temperature": 0.6,
     }
-    logger.info(f"آماده‌سازی درخواست برای OpenRouter. مدل: {OPENROUTER_MODEL_NAME}, تاریخچه: {len(chat_history)} پیام.")
+    logger.info(f"آماده‌سازی درخواست برای OpenRouter. مدل: {current_model}, تاریخچه: {len(chat_history)} پیام.")
     async with httpx.AsyncClient(timeout=90.0) as client:
         try:
             logger.debug(f"ارسال درخواست به OpenRouter. Body: {body}")
@@ -256,36 +257,32 @@ async def ask_openrouter(system_prompt: str, chat_history: list) -> str:
             llm_response_content = ""
             if data.get("choices") and len(data["choices"]) > 0 and data["choices"][0].get("message") and data["choices"][0]["message"].get("content"):
                 llm_response_content = data["choices"][0]["message"]["content"].strip()
-                logger.info(f"محتوای دقیق پاسخ دریافت شده از LLM: '{llm_response_content}'")
+                logger.info(f"محتوای دقیق پاسخ دریافت شده از LLM ({current_model}): '{llm_response_content}'")
                 return llm_response_content
             else:
-                logger.error(f"ساختار پاسخ دریافت شده از OpenRouter نامعتبر: {data}")
-                return "❌ مشکلی در پردازش پاسخ از سرویس پزشک مجازی رخ داد."
+                logger.error(f"ساختار پاسخ دریافت شده از OpenRouter ({current_model}) نامعتبر: {data}")
+                return "❌ مشکلی در پردازش پاسخ از سرویس هوش مصنوعی رخ داد."
         except Exception as e:
-            logger.error(f"خطا در ارتباط یا پردازش پاسخ OpenRouter: {e}", exc_info=True)
-            return "❌ بروز خطا در ارتباط با سرویس پزشک مجازی. لطفاً مجدداً تلاش نمایید."
+            logger.error(f"خطا در ارتباط یا پردازش پاسخ OpenRouter ({current_model}): {e}", exc_info=True)
+            return "❌ بروز خطا در ارتباط با سرویس هوش مصنوعی. لطفاً مجدداً تلاش نمایید."
 
 def _prepare_doctor_system_prompt(age: int, gender: str) -> str:
+    # پرامپت اصلاح شده برای دکتر تافته (کوتاه‌تر و متمرکزتر)
     return (
-        f"شما یک پزشک عمومی متخصص، بسیار دقیق، با دانش به‌روز، صبور و همدل به نام 'دکتر تافته' هستید. کاربری که با شما صحبت می‌کند {age} ساله و {gender} است. "
-        "وظیفه شما ارائه راهنمایی پزشکی اولیه از طریق یک مکالمه چند مرحله‌ای هدفمند به زبان فارسی روان، صحیح، علمی و قابل فهم برای عموم است. شما هرگز تشخیص قطعی نمی‌دهید و دارو تجویز نمی‌کنید، بلکه اطلاعات اولیه را جمع‌آوری کرده، توصیه‌های عمومی و ایمن ارائه می‌دهید و در صورت لزوم کاربر را به مراجعه به پزشک راهنمایی می‌کنید."
-        "**لحن شما باید حرفه‌ای، محترمانه، علمی و همدلانه باشد. از به‌کار بردن عبارات بیش از حد احساسی، شعاری، یا جملات پایانی بسیار طولانی و غیرضروری مانند 'ایمان دارم بهبودی خوبی خواهید داشت' یا 'پشتیبانی همیشگی من در دسترس شماست' جداً خودداری کنید. پاسخ‌های خود را مختصر و مفید نگه دارید.**"
-        "**روند مکالمه شما باید به صورت اجباری مراحل زیر را طی کند:** "
-        "1.  **دریافت مشکل اولیه کاربر.** "
-        "2.  **مرحله پرسشگری فعال و دقیق (بسیار کلیدی و الزامی):** به محض دریافت مشکل اولیه، **به هیچ وجه نباید اطلاعات عمومی یا توصیه فوری ارائه دهید.** شما موظف هستید ابتدا **حداقل یک یا دو سوال تکمیلی بسیار دقیق، کوتاه و کاملاً مرتبط** با همان مشکل مطرح شده از کاربر بپرسید تا جزئیات بیشتری کسب کنید. (مثال برای سردرد: 'سردردتان از کی شروع شده و دقیقاً کجای سرتان است؟ آیا حالت تهوع یا حساسیت به نور هم دارید؟'). "
-        "3.  **ادامه پرسشگری هوشمندانه:** بر اساس پاسخ کاربر، در صورت نیاز، سوالات تکمیلی دیگری بپرسید (همچنان یک یا دو سوال کوتاه و مرتبط در هر نوبت). "
-        "4.  **پرسش برای اطلاعات تکمیلی نهایی از کاربر (الزامی قبل از هرگونه توصیه):** پس از اینکه چند سوال کلیدی پرسیدید و قبل از ارائه هرگونه جمع‌بندی یا توصیه، **حتماً و الزاماً از کاربر این سوال را بپرسید: 'آیا نکته یا علامت دیگری در مورد این مشکل وجود دارد که بخواهید اضافه کنید یا سوال دیگری در این مورد دارید؟'** "
-        "5.  **ارائه توصیه‌های عمومی و اولیه (پس از مرحله ۴):** تنها پس از پاسخ کاربر به سوال مرحله ۴ (و اگر اطلاعات جدید و مهمی ارائه نداد یا گفت سوال دیگری ندارد)، می‌توانید توصیه‌های عمومی و ایمن اولیه ارائه دهید. **از توصیه داروهای خاص یا تشخیص قطعی خودداری کنید.** در پایان توصیه‌ها، همیشه تاکید کنید که اگر علائم ادامه یافت یا شدیدتر شد، باید به پزشک مراجعه کنند. سپس مکالمه را با یک جمله کوتاه و حرفه‌ای مانند 'امیدوارم بهتر شوید. آیا سوال دیگری هست که بتوانم کمک کنم؟' به پایان برسانید یا منتظر پاسخ کاربر بمانید."
-        "**سایر دستورالعمل‌های مهم:** "
-        "   - از اصطلاحات صحیح و رایج پزشکی و عمومی در زبان فارسی استفاده کنید. "
-        "   - اگر سوالی به وضوح پزشکی نبود، با این عبارت دقیق پاسخ دهید: 'متاسفم، من یک ربات پزشک هستم و فقط می‌توانم به سوالات مرتبط با حوزه پزشکی پاسخ دهم. چطور می‌توانم در زمینه پزشکی به شما کمک کنم؟' "
-        "   - در تمامی پاسخ‌های خود، مستقیماً به سراغ مطلب بروید و از مقدمات غیرضروری استفاده نکنید. "
-        "   - همیشه محترمانه و دقیق باشید."
+        f"شما 'دکتر تافته'، یک پزشک عمومی متخصص، دقیق و با حوصله هستید. کاربری که با شما صحبت می‌کند {age} ساله و {gender} است. "
+        "وظیفه اصلی شما پاسخگویی دقیق و علمی به سوالات پزشکی کاربر به زبان فارسی ساده و قابل فهم است. "
+        "اگر سوال کاربر برای ارائه پاسخ کامل و ایمن، نیاز به اطلاعات بیشتری داشت، **فقط یک یا دو سوال کوتاه، کلیدی و کاملاً مرتبط بپرسید** تا جزئیات لازم را کسب کنید. از پرسیدن سوالات غیرضروری یا لیست بلند سوالات خودداری کنید. "
+        "پس از دریافت اطلاعات کافی، راهنمایی پزشکی عمومی و اولیه ارائه دهید. **هرگز تشخیص قطعی ندهید یا دارو تجویز نکنید.** "
+        "همیشه تاکید کنید که برای تشخیص قطعی و درمان تخصصی، باید به پزشک مراجعه کنند، خصوصاً اگر علائم شدید یا طولانی‌مدت هستند. "
+        "اگر سوالی کاملاً غیرپزشکی بود (مانند آشپزی، تاریخ و ...)، با احترام و با این عبارت پاسخ دهید: 'متاسفم، من یک ربات پزشک هستم و فقط می‌توانم به سوالات مرتبط با حوزه پزشکی پاسخ دهم. چطور می‌توانم در زمینه پزشکی به شما کمک کنم؟' "
+        "در تمامی پاسخ‌های خود، مستقیماً به سراغ اصل مطلب بروید و از مقدمات غیرضروری (مانند 'بله'، 'خب') پرهیز کنید. "
+        "لحن شما باید حرفه‌ای، همدلانه و محترمانه باشد، اما از عبارات بیش از حد احساسی یا شعاری خودداری کنید."
     )
 
 async def notify_points_awarded(bot: Application.bot, chat_id: int, user_id_str: str, points_awarded: int, reason: str):
     if not db: return
     try:
+        # اطمینان از وجود پروفایل برای خواندن امتیاز کل به‌روز شده
         await asyncio.to_thread(get_or_create_user_profile, user_id_str)
         user_profile_updated = await asyncio.to_thread(get_user_profile_data, user_id_str)
         total_points = user_profile_updated.get('points', 0) if user_profile_updated else points_awarded
@@ -312,18 +309,19 @@ async def award_badge_if_not_already_awarded(bot: Application.bot, chat_id: int,
 
 async def get_dynamic_main_menu_keyboard(context: ContextTypes.DEFAULT_TYPE, user_id_str: str) -> ReplyKeyboardMarkup:
     is_member = False
-    if 'is_club_member_cached' in context.user_data: # ابتدا از کش user_data بخوان
-        is_member = context.user_data['is_club_member_cached']
-        logger.info(f"وضعیت عضویت کاربر {user_id_str} از کش user_data خوانده شد: {is_member}")
-    elif db: # اگر در کش نبود و دیتابیس متصل بود، از دیتابیس بخوان
+    # کش را در ابتدای این تابع پاک می‌کنیم تا همیشه از دیتابیس بخواند
+    if 'is_club_member_cached' in context.user_data:
+        del context.user_data['is_club_member_cached']
+        
+    if db:
         try:
             user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
             is_member = user_profile.get('is_club_member', False) if user_profile else False
-            context.user_data['is_club_member_cached'] = is_member # نتیجه را در کش ذخیره کن
-            logger.info(f"وضعیت عضویت کاربر {user_id_str} از دیتابیس خوانده و در کش ذخیره شد: {is_member}")
+            context.user_data['is_club_member_cached'] = is_member # کش کردن مقدار جدید
         except Exception as e:
             logger.error(f"خطا در خواندن وضعیت عضویت کاربر {user_id_str} (get_dynamic_main_menu): {e}")
-    # اگر دیتابیس هم در دسترس نبود یا خطایی رخ داد، is_member همان False اولیه باقی می‌ماند
+    else:
+        context.user_data['is_club_member_cached'] = False
 
     if is_member:
         keyboard_layout = [
@@ -349,7 +347,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
 
     keys_to_clear_from_session = [
         "doctor_chat_history", "system_prompt_for_doctor",
-        "age_temp", "is_club_member_cached", # کش وضعیت عضویت هم پاک شود تا از دیتابیس بازخوانی شود
+        "age_temp", "is_club_member_cached",
         "awaiting_field_to_edit", "temp_first_name"
     ]
     for key in keys_to_clear_from_session:
@@ -359,7 +357,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
 
     if db:
         try:
-            # اطمینان از وجود پروفایل کاربر در دیتابیس هنگام شروع یا بازگشت به منو
             await asyncio.to_thread(get_or_create_user_profile, user_id_str, user.username, user.first_name)
         except Exception as e:
             logger.error(f"خطا در get_or_create_user_profile (start) برای کاربر {user_id_str}: {e}", exc_info=True)
@@ -379,7 +376,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
                 chat_id=effective_chat_id, photo=WELCOME_IMAGE_URL,
                 caption=welcome_message_text, reply_markup=dynamic_main_menu
             )
-        else: # در غیر این صورت (بازگشت به منو، /cancel، یا /start بدون عکس) فقط متن بفرست
+        else:
             await context.bot.send_message(chat_id=effective_chat_id, text=welcome_message_text, reply_markup=dynamic_main_menu)
     except Exception as e:
         logger.error(f"خطا در ارسال پیام خوش‌آمدگویی برای {user_id_str}: {e}", exc_info=True)
@@ -400,7 +397,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user = update.effective_user
     user_id_str = str(user.id)
     logger.info(f"کاربر {user_id_str} در منوی اصلی گزینه '{text}' را انتخاب کرد.")
-    dynamic_main_menu = await get_dynamic_main_menu_keyboard(context, user_id_str) # منوی به‌روز شده
+    dynamic_main_menu = await get_dynamic_main_menu_keyboard(context, user_id_str)
 
     if text == "👨‍⚕️ دکتر تافته":
         age, gender = None, None
@@ -425,18 +422,17 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return States.DOCTOR_CONVERSATION
         else: # سن یا جنسیت در دیتابیس نیست، به مرحله ورود اطلاعات برو
             # اگر در جریان عضویت باشگاه هستیم، این فلگ را حفظ می‌کنیم
-            # is_joining_club = context.user_data.get('club_join_flow_active', False)
-            # if is_joining_club:
-            #     logger.info(f"کاربر {user_id_str} در جریان عضویت باشگاه است و نیاز به سن/جنسیت دارد.")
-            # else:
-            #     logger.info(f"سن یا جنسیت برای کاربر {user_id_str} در دیتابیس موجود نیست. درخواست سن.")
+            is_joining_club_flow = context.user_data.get('club_join_flow_active', False)
+            if is_joining_club_flow:
+                 logger.info(f"کاربر {user_id_str} در جریان عضویت باشگاه است و نیاز به سن/جنسیت دارد. ادامه به درخواست سن.")
+            else:
+                 logger.info(f"سن یا جنسیت برای کاربر {user_id_str} در دیتابیس موجود نیست. درخواست سن.")
             
-            # پاک کردن مقادیر احتمالی ناقص از user_data قبل از پرسیدن مجدد
             if "age" in context.user_data: del context.user_data["age"]
             if "gender" in context.user_data: del context.user_data["gender"]
             
             await update.message.reply_text(
-                "برای استفاده از دکتر تافته، ابتدا باید سن و جنسیت خود را وارد کنید. لطفاً سن خود را وارد کنید:",
+                "برای ادامه، لطفاً ابتدا سن خود را وارد کنید:", # پیام عمومی‌تر
                 reply_markup=AGE_INPUT_KEYBOARD
             )
             return States.AWAITING_AGE
@@ -453,7 +449,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         age, gender = None, None
         if db:
             user_profile = await asyncio.to_thread(get_user_profile_data, user_id_str)
-            if user_profile: # پروفایل باید وجود داشته باشد چون get_or_create در start فراخوانی شده
+            if user_profile:
                 age = user_profile.get("age")
                 gender = user_profile.get("gender")
         if not (age and gender): # اگر سن یا جنسیت هنوز در دیتابیس ثبت نشده
@@ -463,7 +459,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 "برای عضویت در باشگاه، ابتدا باید سن خود را وارد کنید:",
                 reply_markup=AGE_INPUT_KEYBOARD
             )
-            return States.AWAITING_AGE # مستقیم به مرحله ورود سن برو
+            return States.AWAITING_AGE
         else: # سن و جنسیت موجود است، پس سوال برای تایید عضویت
             await update.message.reply_text(
                 "عضویت در باشگاه مشتریان تافته مزایای ویژه‌ای برای شما خواهد داشت! آیا مایل به عضویت هستید؟",
@@ -531,7 +527,7 @@ async def request_gender_handler(update: Update, context: ContextTypes.DEFAULT_T
             logger.error(f"خطا در ذخیره سن/جنسیت یا اعطای امتیاز/نشان برای {user_id_str}: {e}", exc_info=True)
 
     # اگر کاربر در جریان عضویت در باشگاه بود، او را به مرحله تایید عضویت هدایت کن
-    if context.user_data.pop('club_join_flow_active', False): # .pop برای مصرف کردن فلگ
+    if context.user_data.pop('club_join_flow_active', False):
         logger.info(f"کاربر {user_id_str} پروفایل (سن/جنسیت) را در جریان عضویت باشگاه تکمیل کرد. هدایت به تایید عضویت.")
         await update.message.reply_text(
             f"✅ پروفایل پایه شما (سن: {age}، جنسیت: {gender}) تکمیل شد.\n"
@@ -579,15 +575,20 @@ async def handle_club_join_confirmation(update: Update, context: ContextTypes.DE
             await update.message.reply_text(f"عضویت شما در باشگاه مشتریان تافته با موفقیت انجام شد! ✨")
             await notify_points_awarded(update.get_bot(), update.effective_chat.id, user_id_str, POINTS_FOR_JOINING_CLUB, "عضویت در باشگاه مشتریان")
             await award_badge_if_not_already_awarded(update.get_bot(), update.effective_chat.id, user_id_str, BADGE_CLUB_MEMBER)
+            # ارسال مجدد منوی اصلی به‌روز شده پس از پیام‌های بالا
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="به منوی اصلی بازگشتید.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
+
         except Exception as e:
             logger.error(f"خطا در عضویت باشگاه برای {user_id_str}: {e}", exc_info=True)
-            await update.message.reply_text("مشکلی در عضویت شما پیش آمد.")
+            await update.message.reply_text("مشکلی در عضویت شما پیش آمد.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
+            return await start(update, context) # بازگشت به منوی اصلی در صورت خطا
+            
     elif text == "❌ خیر، فعلاً نه":
-        await update.message.reply_text("متوجه شدم. هر زمان تمایل داشتید، می‌توانید از طریق منوی اصلی اقدام کنید.")
+        await update.message.reply_text("متوجه شدم. هر زمان تمایل داشتید، می‌توانید از طریق منوی اصلی اقدام کنید.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
     else:
         await update.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید.", reply_markup=CLUB_JOIN_CONFIRMATION_KEYBOARD)
         return States.AWAITING_CLUB_JOIN_CONFIRMATION
-    return await start(update, context)
+    return States.MAIN_MENU # بازگشت به حالت منوی اصلی برای دریافت پیام بعدی از کاربر با منوی جدید
 
 async def doctor_conversation_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> States:
     logger.info(f"--- DCH Entered --- User: {update.effective_user.id}, Text: '{update.message.text}', History items: {len(context.user_data.get('doctor_chat_history', []))}")
@@ -707,7 +708,6 @@ async def handle_cancel_membership_confirmation(update: Update, context: Context
             await update.message.reply_text("سیستم باشگاه موقتا در دسترس نیست.", reply_markup=await get_dynamic_main_menu_keyboard(context, user_id_str))
             return await start(update, context)
         try:
-            # ریست کردن کامل اطلاعات پروفایل و باشگاه
             update_payload = {
                 "is_club_member": False, "points": 0, "badges": [],
                 "club_join_date": None, "club_tip_usage_count": 0,
@@ -825,15 +825,15 @@ async def health_tip_command_handler(update: Update, context: ContextTypes.DEFAU
             message_to_send = f"⚕️ **نکته سلامتی ویژه اعضای باشگاه تافته:**\n\n_{health_tip_response}_"
             await update.message.reply_text(message_to_send, parse_mode="Markdown", reply_markup=dynamic_main_menu)
             
-            # امتیاز و نشان برای نکته سلامتی حذف شده است، اما شمارنده را نگه می‌داریم اگر بعدا لازم شد
+            # امتیاز برای نکته سلامتی حذف شده، فقط شمارنده و نشان را مدیریت می‌کنیم
             new_tip_usage_count = user_profile.get('club_tip_usage_count', 0) + 1
             update_payload = {"club_tip_usage_count": new_tip_usage_count}
+            
             await asyncio.to_thread(update_user_profile_data, user_id_str, update_payload)
             logger.info(f"نکته سلامتی برای عضو باشگاه {user_id_str} ارسال شد. تعداد استفاده: {new_tip_usage_count}")
-
-            # اگر می‌خواهید نشان کاشف سلامت همچنان بر اساس تعداد استفاده باشد:
-            # if new_tip_usage_count >= CLUB_TIP_BADGE_THRESHOLD:
-            #     await award_badge_if_not_already_awarded(update.get_bot(), update.effective_chat.id, user_id_str, BADGE_HEALTH_EXPLORER)
+            
+            if new_tip_usage_count >= CLUB_TIP_BADGE_THRESHOLD:
+                await award_badge_if_not_already_awarded(update.get_bot(), update.effective_chat.id, user_id_str, BADGE_HEALTH_EXPLORER)
         else:
             await update.message.reply_text("این بخش مخصوص اعضای باشگاه مشتریان تافته است.", reply_markup=dynamic_main_menu)
             
@@ -846,18 +846,21 @@ async def health_tip_command_handler(update: Update, context: ContextTypes.DEFAU
 async def fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     user_id_str = str(user.id) if user else "UnknownUser"
+    # ارسال منوی اصلی پویا در پاسخ به پیام فال‌بک
     dynamic_main_menu = await get_dynamic_main_menu_keyboard(context, user_id_str)
     
     logger.warning(f"--- GLOBAL FALLBACK Reached --- User: {user_id_str}, Text: '{update.message.text if update.message else 'No message text'}', Current user_data: {context.user_data}")
     
-    if update.effective_chat:
+    if update.effective_chat: # اطمینان از وجود چت برای ارسال پیام
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="متوجه نشدم چه گفتید. لطفاً از گزینه‌های منو استفاده کنید یا اگر در مرحله خاصی هستید، ورودی مورد انتظار را ارسال نمایید.",
+            text="متاسفم، متوجه منظور شما نشدم یا در حال حاضر در مرحله مناسبی برای این درخواست نیستید. "
+                 "لطفاً از گزینه‌های منوی زیر استفاده کنید. اگر مشکل ادامه داشت، می‌توانید با ارسال مجدد دستور /start، ربات را مجدداً راه‌اندازی کنید.",
             reply_markup=dynamic_main_menu
         )
     else:
         logger.error(f"Fallback_message: effective_chat is None for user {user_id_str}, cannot send reply.")
+
 
 # --- Flask App & Main Execution ---
 flask_app = Flask(__name__)
@@ -897,11 +900,13 @@ if __name__ == '__main__':
             States.AWAITING_LAST_NAME: [MessageHandler(filters.Regex("^🔙 انصراف و بازگشت به پروفایل$"), profile_view_handler), MessageHandler(filters.TEXT & ~filters.COMMAND, awaiting_last_name_handler)],
         },
         fallbacks=[
-            CommandHandler("cancel", cancel), # تابع cancel تعریف شده است
+            CommandHandler("cancel", cancel), 
             CommandHandler("start", start),
             MessageHandler(filters.Regex("^🔙 بازگشت به منوی اصلی$"), start),
         ],
-        persistent=False, name="main_conversation"
+        persistent=False, 
+        name="main_conversation",
+        allow_reentry=True # افزودن این پارامتر برای مدیریت بهتر entry_point ها
     )
     telegram_application.add_handler(CommandHandler("myprofile", my_profile_info_handler))
     telegram_application.add_handler(CommandHandler("clubtip", health_tip_command_handler))
